@@ -1,0 +1,16 @@
+# Nix
+.direnv/
+result
+result-*
+
+# Rust
+target/
+
+# JavaScript / React Native
+node_modules/
+
+# Local/editor noise
+.DS_Store
+.idea/
+
+.pre-commit-config.yaml
