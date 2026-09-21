@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   Platform,
   PlatformColor,
   Pressable,
@@ -12,7 +13,7 @@ import {
   View,
 } from 'react-native';
 
-import { checkConnection, type ConnectedUser } from './src/native/VelaRust';
+import { loadMyWork, type MyWork } from './src/native/VelaRust';
 
 function App() {
   const dark = useColorScheme() === 'dark';
@@ -21,7 +22,7 @@ function App() {
 
   const [serviceUrl, setServiceUrl] = useState('');
   const [token, setToken] = useState('');
-  const [user, setUser] = useState<ConnectedUser | null>(null);
+  const [work, setWork] = useState<MyWork | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
 
@@ -35,11 +36,11 @@ function App() {
     setError(null);
 
     try {
-      const connectedUser = await checkConnection(trimmedUrl, token);
-      setUser(connectedUser);
+      const loadedWork = await loadMyWork(trimmedUrl, token);
+      setWork(loadedWork);
       setToken('');
     } catch (connectionError) {
-      setUser(null);
+      setWork(null);
       setError(
         connectionError instanceof Error
           ? connectionError.message
@@ -90,96 +91,126 @@ function App() {
       <View style={styles.content}>
         <Text style={[styles.heading, { color: palette.text }]}>My Work</Text>
 
-        <View style={styles.connectionState}>
-          {user ? (
-            <>
-              <Text style={[styles.connectionTitle, { color: palette.text }]}>
-                Connected as {user.full_name}
+        {work ? (
+          <View style={styles.work}>
+            <View
+              style={[styles.accountBar, { borderColor: palette.separator }]}
+            >
+              <Text style={[styles.accountName, { color: palette.text }]}>
+                {work.user.full_name}
               </Text>
-              <Text
-                style={[
-                  styles.connectionDescription,
-                  { color: palette.secondaryText },
-                ]}
-              >
-                {user.login}
-                {user.guest ? ' · Guest access' : ''}
+              <Text style={{ color: palette.secondaryText }}>
+                {work.user.login}
+                {work.user.guest ? ' · Guest access' : ''}
               </Text>
-            </>
-          ) : (
-            <>
-              <Text style={[styles.connectionTitle, { color: palette.text }]}>
-                Connect to YouTrack
-              </Text>
-              <Text
-                style={[
-                  styles.connectionDescription,
-                  { color: palette.secondaryText },
-                ]}
-              >
-                Enter your YouTrack address and, if required, a permanent token.
-              </Text>
+            </View>
 
-              <View style={styles.form}>
-                <TextInput
-                  accessibilityLabel="YouTrack address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  onChangeText={setServiceUrl}
-                  onSubmitEditing={connect}
-                  placeholder="https://youtrack.example.com"
-                  placeholderTextColor={palette.secondaryText}
-                  style={[
-                    styles.input,
-                    {
-                      borderColor: palette.separator,
-                      color: palette.text,
-                    },
-                  ]}
-                  value={serviceUrl}
-                />
-                <TextInput
-                  accessibilityLabel="Permanent token"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  onChangeText={setToken}
-                  onSubmitEditing={connect}
-                  placeholder="Permanent token (optional)"
-                  placeholderTextColor={palette.secondaryText}
-                  secureTextEntry
-                  style={[
-                    styles.input,
-                    {
-                      borderColor: palette.separator,
-                      color: palette.text,
-                    },
-                  ]}
-                  value={token}
-                />
-
-                {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={!serviceUrl.trim() || connecting}
-                  onPress={connect}
-                  style={({ pressed }) => [
-                    styles.button,
-                    { backgroundColor: palette.accent },
-                    (!serviceUrl.trim() || connecting) && styles.buttonDisabled,
-                    pressed && styles.buttonPressed,
-                  ]}
+            <FlatList
+              contentContainerStyle={
+                work.issues.length === 0 ? styles.emptyList : undefined
+              }
+              data={work.issues}
+              keyExtractor={issue => issue.id}
+              ListEmptyComponent={
+                <Text style={{ color: palette.secondaryText }}>
+                  No unresolved issues assigned to you.
+                </Text>
+              }
+              renderItem={({ item }) => (
+                <View
+                  style={[styles.issueRow, { borderColor: palette.separator }]}
                 >
-                  {connecting ? (
-                    <ActivityIndicator color="#ffffff" size="small" />
-                  ) : (
-                    <Text style={styles.buttonText}>Connect</Text>
-                  )}
-                </Pressable>
-              </View>
-            </>
-          )}
-        </View>
+                  <Text style={[styles.issueMarker, { color: palette.accent }]}>
+                    ○
+                  </Text>
+                  <Text
+                    style={[styles.issueId, { color: palette.secondaryText }]}
+                  >
+                    {item.id_readable}
+                  </Text>
+                  <Text
+                    numberOfLines={1}
+                    style={[styles.issueSummary, { color: palette.text }]}
+                  >
+                    {item.summary}
+                  </Text>
+                </View>
+              )}
+            />
+          </View>
+        ) : (
+          <View style={styles.connectionState}>
+            <Text style={[styles.connectionTitle, { color: palette.text }]}>
+              Connect to YouTrack
+            </Text>
+            <Text
+              style={[
+                styles.connectionDescription,
+                { color: palette.secondaryText },
+              ]}
+            >
+              Enter your YouTrack address and, if required, a permanent token.
+            </Text>
+
+            <View style={styles.form}>
+              <TextInput
+                accessibilityLabel="YouTrack address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChangeText={setServiceUrl}
+                onSubmitEditing={connect}
+                placeholder="https://youtrack.example.com"
+                placeholderTextColor={palette.secondaryText}
+                style={[
+                  styles.input,
+                  {
+                    borderColor: palette.separator,
+                    color: palette.text,
+                  },
+                ]}
+                value={serviceUrl}
+              />
+              <TextInput
+                accessibilityLabel="Permanent token"
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChangeText={setToken}
+                onSubmitEditing={connect}
+                placeholder="Permanent token (optional)"
+                placeholderTextColor={palette.secondaryText}
+                secureTextEntry
+                style={[
+                  styles.input,
+                  {
+                    borderColor: palette.separator,
+                    color: palette.text,
+                  },
+                ]}
+                value={token}
+              />
+
+              {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+              <Pressable
+                accessibilityRole="button"
+                disabled={!serviceUrl.trim() || connecting}
+                onPress={connect}
+                style={({ pressed }) => [
+                  styles.button,
+                  { backgroundColor: palette.accent },
+                  (!serviceUrl.trim() || connecting) && styles.buttonDisabled,
+                  pressed && styles.buttonPressed,
+                ]}
+              >
+                {connecting ? (
+                  <ActivityIndicator color="#ffffff" size="small" />
+                ) : (
+                  <Text style={styles.buttonText}>Connect</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -252,6 +283,45 @@ const styles = StyleSheet.create({
   heading: {
     fontSize: 28,
     fontWeight: '600',
+  },
+  work: {
+    flex: 1,
+    marginTop: 24,
+  },
+  accountBar: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    marginBottom: 4,
+    paddingBottom: 14,
+  },
+  accountName: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  issueRow: {
+    alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    minHeight: 42,
+    paddingHorizontal: 4,
+  },
+  issueMarker: {
+    fontSize: 17,
+    marginRight: 10,
+  },
+  issueId: {
+    fontSize: 12,
+    marginRight: 12,
+    width: 82,
+  },
+  issueSummary: {
+    flex: 1,
+    fontSize: 14,
+  },
+  emptyList: {
+    alignItems: 'center',
+    flexGrow: 1,
+    justifyContent: 'center',
   },
   connectionState: {
     alignItems: 'center',

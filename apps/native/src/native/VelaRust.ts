@@ -8,22 +8,36 @@ export type ConnectedUser = {
   guest: boolean;
 };
 
-type VelaRustModule = {
-  checkConnection(
-    serviceUrl: string,
-    bearerToken: string,
-  ): Promise<ConnectedUser>;
+export type MyWorkIssue = {
+  id: string;
+  id_readable: string;
+  summary: string;
+  resolved_at: number | null;
 };
 
-const module = NativeModules.VelaRust as VelaRustModule | undefined;
+export type MyWork = {
+  user: ConnectedUser;
+  issues: MyWorkIssue[];
+};
 
-export async function checkConnection(
+type VelaRustModule = {
+  loadMyWork(
+    serviceUrl: string,
+    bearerToken: string,
+    top: number,
+  ): Promise<MyWork>;
+};
+
+export async function loadMyWork(
   serviceUrl: string,
   bearerToken: string,
-): Promise<ConnectedUser> {
+  top = 50,
+): Promise<MyWork> {
+  const module = NativeModules.VelaRust as VelaRustModule | undefined;
+
   if (!module) {
     throw new Error('Vela Rust bridge is unavailable');
   }
 
-  return module.checkConnection(serviceUrl, bearerToken);
+  return module.loadMyWork(serviceUrl, bearerToken, top);
 }
