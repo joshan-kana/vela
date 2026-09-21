@@ -52,6 +52,28 @@
           rustc = rustToolchain;
         };
 
+        nativeAppCheck = pkgs.buildNpmPackage {
+          pname = "vela-native-check";
+          version = "0";
+
+          src = ./apps/native;
+          npmDepsHash = "sha256-BBHz0p+Mq1YDHUb7xZ49lpZ/a0jph6yXmGjtxYBoZXs=";
+
+          dontNpmBuild = true;
+
+          buildPhase = ''
+            runHook preBuild
+            npm run lint
+            npm run typecheck
+            npm test -- --runInBand
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            touch "$out"
+          '';
+        };
+
         rustWorkspaceCheck = rustPlatform.buildRustPackage {
           pname = "vela-workspace-check";
           version = "0";
@@ -119,6 +141,10 @@
             };
 
             typos = {
+              excludes = [
+                "apps/native/**/*.pbxproj"
+                "apps/native/**/*.storyboard"
+              ];
               includes = [ "*.md" ];
               priority = 3;
             };
@@ -154,23 +180,34 @@
         checkRepo = pkgs.writeShellScriptBin "chk" ''
           exec nix flake check "$@"
         '';
+
+        mkDevShell = if pkgs.stdenv.hostPlatform.isDarwin then pkgs.mkShellNoCC else pkgs.mkShell;
       in
       {
         formatter = treefmt.config.build.wrapper;
 
-        devShells.default = pkgs.mkShell {
-          packages = with pkgs; [
-            checkRepo
-            formatRepo
-            git
-            jq
-            nixd
-            nodejs_24
-            pnpm
-            rust-analyzer
-            rustToolchain
-            treefmt.config.build.wrapper
-          ];
+        devShells.default = mkDevShell {
+          packages =
+            (with pkgs; [
+              checkRepo
+              cmake
+              formatRepo
+              git
+              jq
+              nixd
+              nodejs_24
+              pkg-config
+              rust-analyzer
+              rustToolchain
+              treefmt.config.build.wrapper
+            ])
+            ++ (
+              with pkgs;
+              lib.optionals stdenv.hostPlatform.isDarwin [
+                cocoapods
+                watchman
+              ]
+            );
 
           inherit (preCommit) shellHook;
 
@@ -178,6 +215,7 @@
         };
 
         checks = {
+          native-app = nativeAppCheck;
           repo-quality = treefmt.config.build.check self;
           rust-workspace = rustWorkspaceCheck;
         };
