@@ -10,7 +10,13 @@ fi
 
 cd "$repo_root"
 
-bash -n   scripts/build-rust-macos.sh   scripts/build-macos-app.sh   scripts/check-macos-app.sh
+shell_scripts=(
+  scripts/build-rust-macos.sh
+  scripts/build-rust-ios.sh
+  scripts/build-macos-app.sh
+  scripts/check-macos-app.sh
+)
+bash -n "$" + "{shell_scripts[@]}"
 
 swift-format lint --strict --recursive apps/macos/Sources/VelaMacOS
 plutil -lint apps/macos/Info.plist >/dev/null
