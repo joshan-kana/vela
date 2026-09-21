@@ -1,0 +1,16 @@
+[package]
+name = "vela-youtrack"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+url.workspace = true
+vela-core = { path = "../vela-core" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

@@ -47,6 +47,41 @@
           ];
         };
 
+        rustPlatform = pkgs.makeRustPlatform {
+          cargo = rustToolchain;
+          rustc = rustToolchain;
+        };
+
+        rustWorkspaceCheck = rustPlatform.buildRustPackage {
+          pname = "vela-workspace-check";
+          version = "0";
+
+          src = self;
+
+          cargoLock.lockFile = ./Cargo.lock;
+
+          nativeBuildInputs = with pkgs; [
+            cmake
+            pkg-config
+          ];
+
+          buildPhase = ''
+            runHook preBuild
+            cargo clippy --workspace --all-targets --all-features -- -D warnings
+            runHook postBuild
+          '';
+
+          checkPhase = ''
+            runHook preCheck
+            cargo test --workspace --all-features
+            runHook postCheck
+          '';
+
+          installPhase = ''
+            touch "$out"
+          '';
+        };
+
         treefmt = treefmt-nix.lib.evalModule pkgs {
           projectRootFile = "flake.nix";
 
@@ -142,7 +177,10 @@
           RUST_BACKTRACE = "1";
         };
 
-        checks.repo-quality = treefmt.config.build.check self;
+        checks = {
+          repo-quality = treefmt.config.build.check self;
+          rust-workspace = rustWorkspaceCheck;
+        };
       }
     );
 }
