@@ -15,6 +15,8 @@ import {
 
 import { loadMyWork, type MyWork } from './src/native/VelaRust';
 
+const ISSUE_ROW_HEIGHT = 42;
+
 function App() {
   const dark = useColorScheme() === 'dark';
   const palette =
@@ -106,6 +108,15 @@ function App() {
             </View>
 
             <FlatList
+              initialNumToRender={20}
+              maxToRenderPerBatch={20}
+              windowSize={5}
+              removeClippedSubviews
+              getItemLayout={(_, index) => ({
+                length: ISSUE_ROW_HEIGHT,
+                offset: ISSUE_ROW_HEIGHT * index,
+                index,
+              })}
               contentContainerStyle={
                 work.issues.length === 0 ? styles.emptyList : undefined
               }
@@ -302,7 +313,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
-    minHeight: 42,
+    minHeight: ISSUE_ROW_HEIGHT,
     paddingHorizontal: 4,
   },
   issueMarker: {
