@@ -1243,6 +1243,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "vela-ffi"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tokio",
+ "vela-core",
+ "vela-youtrack",
+]
+
+[[package]]
 name = "vela-youtrack"
 version = "0.1.0"
 dependencies = [

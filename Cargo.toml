@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/vela-core", "crates/vela-youtrack"]
+members = ["crates/vela-core", "crates/vela-ffi", "crates/vela-youtrack"]
 
 [workspace.package]
 edition = "2024"
@@ -14,4 +14,5 @@ reqwest = { version = "0.13", default-features = false, features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+tokio = { version = "1", features = ["rt"] }
 url = "2"

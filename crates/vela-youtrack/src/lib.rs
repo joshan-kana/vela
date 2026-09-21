@@ -43,13 +43,21 @@ pub struct Client {
 
 impl Client {
     pub fn new(service_url: &str, bearer_token: impl AsRef<str>) -> Result<Self, Error> {
+        Self::with_token(service_url, Some(bearer_token.as_ref()))
+    }
+
+    pub fn guest(service_url: &str) -> Result<Self, Error> {
+        Self::with_token(service_url, None)
+    }
+
+    fn with_token(service_url: &str, bearer_token: Option<&str>) -> Result<Self, Error> {
         let api_url = api_url(service_url)?;
         let mut headers = reqwest::header::HeaderMap::new();
 
-        headers.insert(
-            reqwest::header::AUTHORIZATION,
-            authorization_header(bearer_token.as_ref())?,
-        );
+        if let Some(token) = bearer_token {
+            headers.insert(reqwest::header::AUTHORIZATION, authorization_header(token)?);
+        }
+
         headers.insert(
             reqwest::header::ACCEPT,
             reqwest::header::HeaderValue::from_static("application/json"),

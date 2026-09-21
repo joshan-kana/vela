@@ -45,6 +45,10 @@
             "rust-src"
             "rustfmt"
           ];
+          targets = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
+            "aarch64-apple-darwin"
+            "x86_64-apple-darwin"
+          ];
         };
 
         rustPlatform = pkgs.makeRustPlatform {
