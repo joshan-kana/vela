@@ -152,6 +152,15 @@
               includes = [ "*.md" ];
               priority = 3;
             };
+
+            swift-format = {
+              command = pkgs.lib.getExe pkgs.swift-format;
+              includes = [ "apps/macos/**/*.swift" ];
+              options = [
+                "format"
+                "--in-place"
+              ];
+            };
           };
         };
 
@@ -163,7 +172,7 @@
               enable = true;
               name = "Repository formatting and linting";
               entry = "nix build --no-link .#checks.${system}.repo-quality";
-              files = "\\.(json|lock|md|nix|rs|toml|tsx?|ya?ml)$|^\\.envrc$";
+              files = "\\.(json|lock|md|nix|plist|rs|sh|swift|toml|tsx?|ya?ml)$|^\\.envrc$";
               pass_filenames = false;
             };
 
@@ -182,7 +191,14 @@
         '';
 
         checkRepo = pkgs.writeShellScriptBin "chk" ''
-          exec nix flake check "$@"
+          repo_root="$(${pkgs.lib.getExe pkgs.git} rev-parse --show-toplevel)"
+          cd "$repo_root"
+
+          nix flake check "$@"
+
+          if [ "$(uname -s)" = "Darwin" ]; then
+            exec ./scripts/check-macos-app.sh
+          fi
         '';
 
         mkDevShell = if pkgs.stdenv.hostPlatform.isDarwin then pkgs.mkShellNoCC else pkgs.mkShell;
@@ -203,6 +219,7 @@
               pkg-config
               rust-analyzer
               rustToolchain
+              swift-format
               treefmt.config.build.wrapper
             ])
             ++ (
