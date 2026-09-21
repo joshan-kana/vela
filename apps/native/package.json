@@ -8,14 +8,11 @@
     "lint": "eslint .",
     "start": "react-native start",
     "test": "jest",
-    "macos": "react-native run-macos",
-    "typecheck": "tsc --noEmit",
-    "pods:macos": "PLATFORM_NAME=macosx CURRENT_ARCH=$(uname -m) pod install --project-directory=macos"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "react": "19.1.4",
-    "react-native": "0.81.6",
-    "react-native-macos": "^0.81.9"
+    "react-native": "0.81.6"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

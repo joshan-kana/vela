@@ -2,8 +2,6 @@ import React, { useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Platform,
-  PlatformColor,
   Pressable,
   StatusBar,
   StyleSheet,
@@ -19,8 +17,7 @@ const ISSUE_ROW_HEIGHT = 42;
 
 function App() {
   const dark = useColorScheme() === 'dark';
-  const palette =
-    Platform.OS === 'macos' ? macOSPalette : dark ? darkPalette : lightPalette;
+  const palette = dark ? darkPalette : lightPalette;
 
   const [serviceUrl, setServiceUrl] = useState('');
   const [token, setToken] = useState('');
@@ -226,16 +223,6 @@ function App() {
     </View>
   );
 }
-
-const macOSPalette = {
-  background: PlatformColor('windowBackgroundColor'),
-  sidebar: PlatformColor('controlBackgroundColor'),
-  separator: PlatformColor('separatorColor'),
-  selection: PlatformColor('unemphasizedSelectedContentBackgroundColor'),
-  text: PlatformColor('labelColor'),
-  secondaryText: PlatformColor('secondaryLabelColor'),
-  accent: PlatformColor('controlAccentColor'),
-};
 
 const lightPalette = {
   background: '#ffffff',

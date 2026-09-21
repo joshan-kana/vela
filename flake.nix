@@ -61,7 +61,7 @@
           version = "0";
 
           src = ./apps/native;
-          npmDepsHash = "sha256-BBHz0p+Mq1YDHUb7xZ49lpZ/a0jph6yXmGjtxYBoZXs=";
+          npmDepsHash = "sha256-+AQNKeRv5c++DtG4KyJ+jkfWmsmOXioolV+P4tSpkY8=";
 
           dontNpmBuild = true;
 
