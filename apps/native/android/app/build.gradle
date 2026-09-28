@@ -1,6 +1,54 @@
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.ValueSource
+import org.gradle.api.provider.ValueSourceParameters
+
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
+
+repositories {
+    maven {
+        url = uri("https://github.com/rustls/rustls-platform-verifier/raw/maven-archive/android-release-support/maven/")
+    }
+}
+
+abstract class RustlsVersion implements ValueSource<String, RustlsVersion.Params> {
+    interface Params extends ValueSourceParameters {
+        RegularFileProperty getLockFile()
+    }
+
+    static final String CRATE_NAME = "rustls-platform-verifier-android"
+
+    @Override
+    String obtain() {
+        def lockFile = parameters.lockFile.get().asFile
+        def lines = lockFile.readLines()
+        def nameIndex = lines.findIndexOf { it.trim() == 'name = "' + CRATE_NAME + '"' }
+        def version = nameIndex < 0 ? null : lines.drop(nameIndex + 1)
+                .find { it.stripLeading().startsWith("version = ") }
+                ?.find(/"([^"]*)"/) { match, value -> value }
+
+        if (!version) {
+            throw new GradleException("$CRATE_NAME not found in $lockFile")
+        }
+
+        return version
+    }
+}
+
+def rustlsPlatformVerifierVersion = providers.of(RustlsVersion) { spec ->
+    spec.parameters.lockFile.set(layout.projectDirectory.file("../../../../Cargo.lock"))
+}
+
+configurations.configureEach { configuration ->
+    configuration.resolutionStrategy.eachDependency { details ->
+        if (details.requested.group == "org.rustls" &&
+                details.requested.name == "rustls-platform-verifier") {
+            details.useVersion(rustlsPlatformVerifierVersion.get())
+            details.because("Android verifier version must match Cargo.lock")
+        }
+    }
+}
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -150,6 +198,7 @@ tasks.configureEach {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    implementation("org.rustls:rustls-platform-verifier")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")

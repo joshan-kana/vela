@@ -13,9 +13,12 @@ class VelaRustModule(
 
   init {
     System.loadLibrary("vela_ffi")
+    initializeRust(reactContext)
   }
 
   override fun getName(): String = NAME
+
+  private external fun initializeRust(context: ReactApplicationContext)
 
   private external fun loadMyWorkJsonNative(
     serviceUrl: String,

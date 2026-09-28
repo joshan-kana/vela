@@ -13,3 +13,4 @@ vela-youtrack = { path = "../vela-youtrack" }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.22"
+rustls-platform-verifier = "=0.7.1"

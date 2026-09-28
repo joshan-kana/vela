@@ -146,6 +146,20 @@ mod android {
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_initializeRust<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        context: JObject<'local>,
+    ) {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<()> {
+                rustls_platform_verifier::android::init_with_env(env, context)?;
+                Ok(())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>();
+    }
+
+    #[unsafe(no_mangle)]
     pub extern "system" fn Java_com_vela_VelaRustModule_loadMyWorkJsonNative<'local>(
         mut unowned_env: EnvUnowned<'local>,
         _this: JObject<'local>,

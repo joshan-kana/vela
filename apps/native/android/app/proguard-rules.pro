@@ -8,3 +8,6 @@
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
 # Add any project specific keep options here:
+
+# Required by rustls-platform-verifier; JNI references are invisible to R8.
+-keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }
