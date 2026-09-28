@@ -58,6 +58,26 @@
         androidSdkRoot = "${androidSdk}/libexec/android-sdk";
         androidNdkRoot = "${androidSdkRoot}/ndk/27.1.12297006";
 
+        emulatorSupported = pkgs.stdenv.hostPlatform.isDarwin || pkgs.stdenv.hostPlatform.isx86_64;
+        emulatorAbi = if pkgs.stdenv.hostPlatform.isAarch64 then "arm64-v8a" else "x86_64";
+        androidEmulator =
+          if emulatorSupported then
+            pkgs.androidenv.emulateApp {
+              name = "vela-android-emulator";
+              platformVersion = "36";
+              abiVersion = emulatorAbi;
+              systemImageType = "google_apis";
+              deviceName = "vela-api36-${emulatorAbi}";
+              androidUserHome = "$HOME/.cache/vela/android-emulator";
+              configOptions = {
+                "hw.keyboard" = "yes";
+                "hw.gpu.enabled" = "yes";
+                "hw.gpu.mode" = "auto";
+              };
+            }
+          else
+            null;
+
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [
             "clippy"
@@ -237,6 +257,10 @@
       in
       {
         formatter = treefmt.config.build.wrapper;
+
+        packages = pkgs.lib.optionalAttrs emulatorSupported {
+          android-emulator = androidEmulator;
+        };
 
         devShells.default = mkDevShell {
           packages =
