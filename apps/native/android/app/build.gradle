@@ -78,9 +78,13 @@ def velaRustReleaseDir = file("$buildDir/generated/vela-rust/release/jniLibs")
 def velaRustAbis = (project.findProperty("reactNativeArchitectures")
         ?: "armeabi-v7a,arm64-v8a,x86,x86_64")
         .replace(",", " ")
+def velaNdkPath = System.getenv("ANDROID_NDK_HOME")
 
 android {
     ndkVersion rootProject.ext.ndkVersion
+    if (velaNdkPath != null) {
+        ndkPath velaNdkPath
+    }
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 

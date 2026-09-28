@@ -37,7 +37,26 @@
         pkgs = import nixpkgs {
           inherit system;
           overlays = [ (import rust-overlay) ];
+          config = {
+            allowUnfree = true;
+            android_sdk.accept_license = true;
+          };
         };
+
+        androidComposition = pkgs.androidenv.composeAndroidPackages {
+          platformVersions = [ "36" ];
+          buildToolsVersions = [ "36.0.0" ];
+          includeNDK = true;
+          ndkVersions = [ "27.1.12297006" ];
+          includeCmake = true;
+          cmakeVersions = [ "3.22.1" ];
+          includeEmulator = false;
+          includeSystemImages = false;
+        };
+
+        androidSdk = androidComposition.androidsdk;
+        androidSdkRoot = "${androidSdk}/libexec/android-sdk";
+        androidNdkRoot = "${androidSdkRoot}/ndk/27.1.12297006";
 
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [
@@ -222,6 +241,7 @@
         devShells.default = mkDevShell {
           packages =
             (with pkgs; [
+              androidSdk
               cargo-ndk
               checkRepo
               cmake
@@ -246,6 +266,13 @@
             );
 
           inherit (preCommit) shellHook;
+
+          ANDROID_HOME = androidSdkRoot;
+          ANDROID_SDK_ROOT = androidSdkRoot;
+          ANDROID_NDK_HOME = androidNdkRoot;
+          ANDROID_NDK_ROOT = androidNdkRoot;
+          JAVA_HOME = pkgs.jdk17.home;
+          GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidSdkRoot}/build-tools/36.0.0/aapt2";
 
           RUST_BACKTRACE = "1";
         };
