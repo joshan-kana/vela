@@ -45,11 +45,21 @@
             "rust-src"
             "rustfmt"
           ];
-          targets = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
+          targets = [
+            "aarch64-linux-android"
+            "armv7-linux-androideabi"
+            "i686-linux-android"
+            "x86_64-linux-android"
+          ]
+          ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
             "aarch64-apple-darwin"
             "aarch64-apple-ios"
-            "aarch64-apple-ios-sim"
             "x86_64-apple-darwin"
+          ]
+          ++ pkgs.lib.optionals (pkgs.stdenv.hostPlatform.isDarwin && pkgs.stdenv.hostPlatform.isAarch64) [
+            "aarch64-apple-ios-sim"
+          ]
+          ++ pkgs.lib.optionals (pkgs.stdenv.hostPlatform.isDarwin && pkgs.stdenv.hostPlatform.isx86_64) [
             "x86_64-apple-ios"
           ];
         };
@@ -212,10 +222,12 @@
         devShells.default = mkDevShell {
           packages =
             (with pkgs; [
+              cargo-ndk
               checkRepo
               cmake
               formatRepo
               git
+              jdk17
               jq
               nixd
               nodejs_24

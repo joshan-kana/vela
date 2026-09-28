@@ -72,6 +72,13 @@ def enableProguardInReleaseBuilds = false
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
+def velaRustScript = file("$rootDir/../../../scripts/build-rust-android.sh")
+def velaRustDebugDir = file("$buildDir/generated/vela-rust/debug/jniLibs")
+def velaRustReleaseDir = file("$buildDir/generated/vela-rust/release/jniLibs")
+def velaRustAbis = (project.findProperty("reactNativeArchitectures")
+        ?: "armeabi-v7a,arm64-v8a,x86,x86_64")
+        .replace(",", " ")
+
 android {
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
@@ -104,6 +111,35 @@ android {
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
+    }
+
+    sourceSets {
+        debug {
+            jniLibs.srcDir velaRustDebugDir
+        }
+        release {
+            jniLibs.srcDir velaRustReleaseDir
+        }
+    }
+}
+
+def buildVelaRustDebug = tasks.register("buildVelaRustDebug", Exec) {
+    environment "VELA_ANDROID_ABIS", velaRustAbis
+    commandLine velaRustScript, "Debug", velaRustDebugDir
+}
+
+def buildVelaRustRelease = tasks.register("buildVelaRustRelease", Exec) {
+    environment "VELA_ANDROID_ABIS", velaRustAbis
+    commandLine velaRustScript, "Release", velaRustReleaseDir
+}
+
+tasks.configureEach {
+    if (name == "mergeDebugJniLibFolders") {
+        dependsOn buildVelaRustDebug
+    }
+
+    if (name == "mergeReleaseJniLibFolders") {
+        dependsOn buildVelaRustRelease
     }
 }
 

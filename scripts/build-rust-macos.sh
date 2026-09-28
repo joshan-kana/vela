@@ -45,9 +45,9 @@ for arch in $requested_archs; do
   esac
 
   if [[ "$cargo_profile" == "release" ]]; then
-    "${cargo_cmd[@]}" build -p vela-ffi --target "$rust_target" --release
+    "${cargo_cmd[@]}" rustc --crate-type staticlib -p vela-ffi --target "$rust_target" --release
   else
-    "${cargo_cmd[@]}" build -p vela-ffi --target "$rust_target"
+    "${cargo_cmd[@]}" rustc --crate-type staticlib -p vela-ffi --target "$rust_target"
   fi
 
   archives+=("$repo_root/target/$rust_target/$cargo_profile/libvela_ffi.a")

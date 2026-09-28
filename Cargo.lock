@@ -1246,6 +1246,7 @@ dependencies = [
 name = "vela-ffi"
 version = "0.1.0"
 dependencies = [
+ "jni",
  "serde",
  "serde_json",
  "tokio",
