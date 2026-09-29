@@ -1,14 +1,19 @@
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use rand::RngCore;
 use reqwest::header::{HeaderValue, InvalidHeaderValue};
 use reqwest::{Client as HttpClient, StatusCode};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use url::Url;
 use vela_core::{
     AgileBoard, BundleValue, CapabilityState, CustomFieldDefinition, CustomFieldValue, Discovered,
     FieldBundle, FieldEvent, FieldType, Issue, IssueDetails, IssueLink, IssueLinkType, IssueRef,
-    ProjectCustomField, ProjectRef, ProjectSchema, SavedQuery, User, UserRef, YouTrackDiscovery,
+    OAuthAuthorization, OAuthTokenSet, ProjectCustomField, ProjectRef, ProjectSchema, SavedQuery,
+    User, UserRef, YouTrackDiscovery,
 };
 
 const USER_FIELDS: &str = "id,login,fullName,guest";
@@ -419,6 +424,155 @@ where
     serde_json::from_str(&body).map_err(Error::Decode)
 }
 
+pub fn begin_oauth_authorization(
+    service_url: &str,
+    hub_url_override: Option<&str>,
+    client_id: &str,
+    redirect_uri: &str,
+    scope: &str,
+) -> Result<OAuthAuthorization, Error> {
+    let hub_url = oauth_hub_url(service_url, hub_url_override)?;
+    let redirect_uri = Url::parse(redirect_uri)?;
+    let code_verifier = random_base64url(32);
+    let state = random_base64url(32);
+    let code_challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(code_verifier.as_bytes()));
+
+    let mut authorization_url = hub_url.join("api/rest/oauth2/auth")?;
+    authorization_url
+        .query_pairs_mut()
+        .append_pair("response_type", "code")
+        .append_pair("state", &state)
+        .append_pair("redirect_uri", redirect_uri.as_str())
+        .append_pair("request_credentials", "default")
+        .append_pair("client_id", client_id)
+        .append_pair("scope", scope)
+        .append_pair("access_type", "offline")
+        .append_pair("code_challenge", &code_challenge)
+        .append_pair("code_challenge_method", "S256");
+
+    Ok(OAuthAuthorization {
+        authorization_url: authorization_url.into(),
+        hub_url: hub_url.into(),
+        client_id: client_id.to_owned(),
+        redirect_uri: redirect_uri.into(),
+        scope: scope.to_owned(),
+        state,
+        code_verifier,
+    })
+}
+
+pub async fn exchange_oauth_code(
+    hub_url: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    code_verifier: &str,
+    code: &str,
+) -> Result<OAuthTokenSet, Error> {
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("grant_type", "authorization_code")
+        .append_pair("code", code)
+        .append_pair("redirect_uri", redirect_uri)
+        .append_pair("code_verifier", code_verifier)
+        .append_pair("client_id", client_id)
+        .finish();
+
+    oauth_token_request(hub_url, body).await
+}
+
+pub async fn refresh_oauth_token(
+    hub_url: &str,
+    client_id: &str,
+    scope: &str,
+    refresh_token: &str,
+) -> Result<OAuthTokenSet, Error> {
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("grant_type", "refresh_token")
+        .append_pair("refresh_token", refresh_token)
+        .append_pair("scope", scope)
+        .append_pair("client_id", client_id)
+        .finish();
+
+    oauth_token_request(hub_url, body).await
+}
+
+async fn oauth_token_request(hub_url: &str, body: String) -> Result<OAuthTokenSet, Error> {
+    let hub_url = normalized_http_url(hub_url)?;
+    let token_url = hub_url.join("api/rest/oauth2/token")?;
+    let response = HttpClient::builder()
+        .build()
+        .map_err(Error::BuildClient)?
+        .post(token_url)
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            "application/x-www-form-urlencoded",
+        )
+        .header(reqwest::header::ACCEPT, "application/json")
+        .body(body)
+        .send()
+        .await
+        .map_err(Error::Request)?;
+
+    let raw: RawOAuthTokenSet = decode_response(response).await?;
+    Ok(raw.into())
+}
+
+fn oauth_hub_url(service_url: &str, hub_url_override: Option<&str>) -> Result<Url, Error> {
+    if let Some(override_url) = hub_url_override.filter(|value| !value.trim().is_empty()) {
+        return normalized_http_url(override_url);
+    }
+
+    let mut url = normalized_http_url(service_url)?;
+    let mut path = url.path().trim_end_matches('/').to_owned();
+
+    if path.ends_with("/api") {
+        path.truncate(path.len() - "/api".len());
+    }
+
+    let cloud = url
+        .host_str()
+        .is_some_and(|host| host.ends_with(".youtrack.cloud"));
+
+    if cloud && path.ends_with("/youtrack") {
+        path.truncate(path.len() - "/youtrack".len());
+    }
+
+    let hub_path = if path.is_empty() || path == "/" {
+        "/hub/".to_owned()
+    } else {
+        format!("{}/hub/", path.trim_end_matches('/'))
+    };
+
+    url.set_path(&hub_path);
+    Ok(url)
+}
+
+fn normalized_http_url(value: &str) -> Result<Url, Error> {
+    let mut url = Url::parse(value)?;
+
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(Error::UnsupportedScheme);
+    }
+
+    url.set_query(None);
+    url.set_fragment(None);
+
+    let path = url.path().trim_end_matches('/');
+    let normalized_path = if path.is_empty() {
+        "/".to_owned()
+    } else {
+        format!("{path}/")
+    };
+    url.set_path(&normalized_path);
+
+    Ok(url)
+}
+
+fn random_base64url(bytes: usize) -> String {
+    let mut random = vec![0_u8; bytes];
+    rand::rng().fill_bytes(&mut random);
+    URL_SAFE_NO_PAD.encode(random)
+}
+
 fn unavailable_capability(status: StatusCode) -> Option<CapabilityState> {
     match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Some(CapabilityState::Forbidden),
@@ -454,6 +608,27 @@ fn api_url(service_url: &str) -> Result<Url, Error> {
 
     url.set_path(&api_path);
     Ok(url)
+}
+
+#[derive(Debug, Deserialize)]
+struct RawOAuthTokenSet {
+    access_token: String,
+    refresh_token: Option<String>,
+    expires_in: Option<i64>,
+    token_type: Option<String>,
+    scope: Option<String>,
+}
+
+impl From<RawOAuthTokenSet> for OAuthTokenSet {
+    fn from(tokens: RawOAuthTokenSet) -> Self {
+        Self {
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token,
+            expires_in: tokens.expires_in,
+            token_type: tokens.token_type,
+            scope: tokens.scope,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -876,12 +1051,89 @@ mod tests {
 
     use super::{
         RawIssue, RawIssueDetails, RawIssueLink, RawProjectRef, RawProjectSchema, api_url,
-        authorization_header, bundle_value, unavailable_capability,
+        authorization_header, begin_oauth_authorization, bundle_value, oauth_hub_url,
+        unavailable_capability,
     };
     use reqwest::StatusCode;
     use vela_core::{
         BundleValue, CapabilityState, Issue, IssueDetails, IssueLink, ProjectRef, ProjectSchema,
     };
+
+    #[test]
+    fn derives_builtin_hub_urls_without_losing_service_prefixes() {
+        assert_eq!(
+            oauth_hub_url("https://example.youtrack.cloud", None)
+                .unwrap()
+                .as_str(),
+            "https://example.youtrack.cloud/hub/"
+        );
+        assert_eq!(
+            oauth_hub_url("https://example.youtrack.cloud/youtrack", None)
+                .unwrap()
+                .as_str(),
+            "https://example.youtrack.cloud/hub/"
+        );
+        assert_eq!(
+            oauth_hub_url("https://youtrack.example.com/youtrack", None)
+                .unwrap()
+                .as_str(),
+            "https://youtrack.example.com/youtrack/hub/"
+        );
+        assert_eq!(
+            oauth_hub_url(
+                "https://youtrack.example.com/youtrack",
+                Some("https://hub.example.com/custom")
+            )
+            .unwrap()
+            .as_str(),
+            "https://hub.example.com/custom/"
+        );
+    }
+
+    #[test]
+    fn builds_authorization_code_pkce_request_for_public_clients() {
+        let authorization = begin_oauth_authorization(
+            "https://example.youtrack.cloud",
+            None,
+            "client-id",
+            "io.github.joshankana.vela:/oauth/callback",
+            "YouTrack",
+        )
+        .unwrap();
+
+        assert_eq!(authorization.hub_url, "https://example.youtrack.cloud/hub/");
+        assert_eq!(authorization.code_verifier.len(), 43);
+        assert_eq!(authorization.state.len(), 43);
+
+        let url = url::Url::parse(&authorization.authorization_url).unwrap();
+        let query = url
+            .query_pairs()
+            .into_owned()
+            .collect::<std::collections::HashMap<_, _>>();
+
+        assert_eq!(query.get("response_type").map(String::as_str), Some("code"));
+        assert_eq!(
+            query.get("client_id").map(String::as_str),
+            Some("client-id")
+        );
+        assert_eq!(query.get("scope").map(String::as_str), Some("YouTrack"));
+        assert_eq!(
+            query.get("access_type").map(String::as_str),
+            Some("offline")
+        );
+        assert_eq!(
+            query.get("code_challenge_method").map(String::as_str),
+            Some("S256")
+        );
+        assert_ne!(
+            query.get("code_challenge").map(String::as_str),
+            Some(authorization.code_verifier.as_str())
+        );
+        assert_eq!(
+            query.get("redirect_uri").map(String::as_str),
+            Some("io.github.joshankana.vela:/oauth/callback")
+        );
+    }
 
     #[test]
     fn builds_cloud_api_url() {

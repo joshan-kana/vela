@@ -70,6 +70,23 @@ char *vela_apply_custom_field_event_json(
     const char *field_id,
     const char *field_type,
     const char *event_id);
+char *vela_begin_oauth_json(
+    const char *service_url,
+    const char *hub_url,
+    const char *client_id,
+    const char *redirect_uri,
+    const char *scope);
+char *vela_exchange_oauth_code_json(
+    const char *hub_url,
+    const char *client_id,
+    const char *redirect_uri,
+    const char *code_verifier,
+    const char *code);
+char *vela_refresh_oauth_token_json(
+    const char *hub_url,
+    const char *client_id,
+    const char *scope,
+    const char *refresh_token);
 void vela_string_free(char *value);
 
 #ifdef __cplusplus

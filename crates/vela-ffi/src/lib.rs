@@ -8,7 +8,7 @@ use vela_core::{
     AgileBoard, CustomFieldValue, Issue, IssueDetails, IssueLink, ProjectSchema, SavedQuery, User,
     UserRef, YouTrackDiscovery,
 };
-use vela_youtrack::Client;
+use vela_youtrack::{Client, begin_oauth_authorization, exchange_oauth_code, refresh_oauth_token};
 
 #[derive(Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -263,6 +263,78 @@ pub extern "C" fn vela_apply_custom_field_event_json(
             &field_type,
             &event_id,
         )
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_begin_oauth_json(
+    service_url: *const c_char,
+    hub_url: *const c_char,
+    client_id: *const c_char,
+    redirect_uri: *const c_char,
+    scope: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let hub_url = read_optional_string(hub_url)?;
+        let client_id = read_required_string(client_id, "OAuth client ID")?;
+        let redirect_uri = read_required_string(redirect_uri, "OAuth redirect URI")?;
+        let scope = read_required_string(scope, "OAuth scope")?;
+
+        begin_oauth_authorization(
+            &service_url,
+            hub_url.as_deref(),
+            &client_id,
+            &redirect_uri,
+            &scope,
+        )
+        .map_err(|error| error.to_string())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_exchange_oauth_code_json(
+    hub_url: *const c_char,
+    client_id: *const c_char,
+    redirect_uri: *const c_char,
+    code_verifier: *const c_char,
+    code: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let hub_url = read_required_string(hub_url, "Hub URL")?;
+        let client_id = read_required_string(client_id, "OAuth client ID")?;
+        let redirect_uri = read_required_string(redirect_uri, "OAuth redirect URI")?;
+        let code_verifier = read_required_string(code_verifier, "PKCE code verifier")?;
+        let code = read_required_string(code, "OAuth authorization code")?;
+        let runtime = runtime()?;
+
+        runtime.block_on(async {
+            exchange_oauth_code(&hub_url, &client_id, &redirect_uri, &code_verifier, &code)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_refresh_oauth_token_json(
+    hub_url: *const c_char,
+    client_id: *const c_char,
+    scope: *const c_char,
+    refresh_token: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let hub_url = read_required_string(hub_url, "Hub URL")?;
+        let client_id = read_required_string(client_id, "OAuth client ID")?;
+        let scope = read_required_string(scope, "OAuth scope")?;
+        let refresh_token = read_required_string(refresh_token, "OAuth refresh token")?;
+        let runtime = runtime()?;
+
+        runtime.block_on(async {
+            refresh_oauth_token(&hub_url, &client_id, &scope, &refresh_token)
+                .await
+                .map_err(|error| error.to_string())
+        })
     })
 }
 
