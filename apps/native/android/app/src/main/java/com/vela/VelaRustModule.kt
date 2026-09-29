@@ -1,5 +1,6 @@
 package com.vela
 
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -10,6 +11,7 @@ class VelaRustModule(
   reactContext: ReactApplicationContext,
 ) : ReactContextBaseJavaModule(reactContext) {
   private val executor = Executors.newSingleThreadExecutor()
+  private val accountStore = SecureAccountStore(reactContext)
 
   init {
     System.loadLibrary("vela_ffi")
@@ -101,6 +103,78 @@ class VelaRustModule(
     bearerToken: String,
     top: Int,
   ): String
+
+  @ReactMethod
+  fun listAccounts(promise: Promise) {
+    executor.execute {
+      try {
+        val accounts = Arguments.createArray()
+        accountStore.accounts().forEach { account ->
+          accounts.pushMap(
+            Arguments.createMap().apply {
+              putString("id", account.id)
+              putString("service_url", account.serviceUrl)
+              putString("auth_kind", account.authKind)
+            },
+          )
+        }
+        promise.resolve(accounts)
+      } catch (error: Throwable) {
+        promise.reject("vela_accounts", error)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun savePermanentTokenAccount(
+    serviceUrl: String,
+    bearerToken: String,
+    promise: Promise,
+  ) {
+    executor.execute {
+      try {
+        val account = accountStore.savePermanentToken(serviceUrl, bearerToken)
+        promise.resolve(
+          Arguments.createMap().apply {
+            putString("id", account.id)
+            putString("service_url", account.serviceUrl)
+            putString("auth_kind", account.authKind)
+          },
+        )
+      } catch (error: Throwable) {
+        promise.reject("vela_accounts", error)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun deleteAccount(
+    accountId: String,
+    promise: Promise,
+  ) {
+    executor.execute {
+      try {
+        accountStore.delete(accountId)
+        promise.resolve(null)
+      } catch (error: Throwable) {
+        promise.reject("vela_accounts", error)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun loadAccountToken(
+    accountId: String,
+    promise: Promise,
+  ) {
+    executor.execute {
+      try {
+        promise.resolve(accountStore.bearerToken(accountId))
+      } catch (error: Throwable) {
+        promise.reject("vela_accounts", error)
+      }
+    }
+  }
 
   @ReactMethod
   fun discoverJson(

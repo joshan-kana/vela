@@ -1,10 +1,217 @@
 #import <Foundation/Foundation.h>
 #import <React/RCTBridgeModule.h>
+#import <Security/Security.h>
 
 #import "../../../../crates/vela-ffi/include/vela_ffi.h"
 
 @interface VelaRustModule : NSObject <RCTBridgeModule>
 @end
+
+static NSString *const VelaAccountService = @"io.github.joshankana.vela.youtrack";
+static NSString *const VelaPermanentTokenAuthKind = @"permanent_token";
+
+static NSError *VelaKeychainError(OSStatus status)
+{
+  NSString *message = (__bridge_transfer NSString *)SecCopyErrorMessageString(status, NULL);
+  return [NSError errorWithDomain:@"VelaKeychain"
+                             code:status
+                         userInfo:@{NSLocalizedDescriptionKey: message ?: @"Keychain error"}];
+}
+
+static NSArray<NSDictionary *> *VelaAccountEntries(NSError **error)
+{
+  NSDictionary *query = @{
+    (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+    (__bridge id)kSecAttrService: VelaAccountService,
+    (__bridge id)kSecReturnAttributes: @YES,
+    (__bridge id)kSecReturnData: @YES,
+    (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitAll,
+  };
+
+  CFTypeRef rawResult = NULL;
+  OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &rawResult);
+  if (status == errSecItemNotFound) {
+    return @[];
+  }
+  if (status != errSecSuccess) {
+    if (error != NULL) {
+      *error = VelaKeychainError(status);
+    }
+    return nil;
+  }
+
+  id result = CFBridgingRelease(rawResult);
+  NSArray *items = [result isKindOfClass:[NSArray class]] ? result : @[result];
+  NSMutableArray<NSDictionary *> *entries = [NSMutableArray arrayWithCapacity:items.count];
+
+  for (NSDictionary *item in items) {
+    NSString *accountId = item[(__bridge id)kSecAttrAccount];
+    NSData *data = item[(__bridge id)kSecValueData];
+    if (![accountId isKindOfClass:[NSString class]] || ![data isKindOfClass:[NSData class]]) {
+      if (error != NULL) {
+        *error = [NSError errorWithDomain:@"VelaKeychain"
+                                     code:-1
+                                 userInfo:@{NSLocalizedDescriptionKey: @"Stored YouTrack credentials are invalid"}];
+      }
+      return nil;
+    }
+
+    NSError *jsonError = nil;
+    NSDictionary *secret = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
+    if (![secret isKindOfClass:[NSDictionary class]]) {
+      if (error != NULL) {
+        *error = jsonError ?: [NSError errorWithDomain:@"VelaKeychain"
+                                                  code:-1
+                                              userInfo:@{NSLocalizedDescriptionKey: @"Stored YouTrack credentials are invalid"}];
+      }
+      return nil;
+    }
+
+    NSMutableDictionary *entry = [secret mutableCopy];
+    entry[@"id"] = accountId;
+    [entries addObject:entry];
+  }
+
+  return entries;
+}
+
+static NSDictionary *VelaAccountMetadata(NSDictionary *entry)
+{
+  return @{
+    @"id": entry[@"id"],
+    @"service_url": entry[@"service_url"],
+    @"auth_kind": entry[@"auth_kind"],
+  };
+}
+
+static NSDictionary *VelaSavePermanentToken(NSString *serviceUrl,
+                                             NSString *bearerToken,
+                                             NSError **error)
+{
+  NSString *normalizedUrl =
+    [serviceUrl stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+
+  NSArray<NSDictionary *> *entries = VelaAccountEntries(error);
+  if (entries == nil) {
+    return nil;
+  }
+
+  NSString *accountId = nil;
+  for (NSDictionary *entry in entries) {
+    if ([entry[@"service_url"] isEqualToString:normalizedUrl]) {
+      accountId = entry[@"id"];
+      break;
+    }
+  }
+  if (accountId == nil) {
+    accountId = [NSUUID UUID].UUIDString.lowercaseString;
+  }
+
+  NSDictionary *secret = @{
+    @"service_url": normalizedUrl,
+    @"bearer_token": bearerToken,
+    @"auth_kind": VelaPermanentTokenAuthKind,
+  };
+
+  NSError *jsonError = nil;
+  NSData *data = [NSJSONSerialization dataWithJSONObject:secret options:0 error:&jsonError];
+  if (data == nil) {
+    if (error != NULL) {
+      *error = jsonError;
+    }
+    return nil;
+  }
+
+  NSDictionary *query = @{
+    (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+    (__bridge id)kSecAttrService: VelaAccountService,
+    (__bridge id)kSecAttrAccount: accountId,
+  };
+
+  NSDictionary *attributes = @{
+    (__bridge id)kSecValueData: data,
+    (__bridge id)kSecAttrAccessible: (__bridge id)kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+  };
+
+  OSStatus status = SecItemUpdate(
+    (__bridge CFDictionaryRef)query,
+    (__bridge CFDictionaryRef)attributes
+  );
+
+  if (status == errSecItemNotFound) {
+    NSMutableDictionary *add = [query mutableCopy];
+    [add addEntriesFromDictionary:attributes];
+    status = SecItemAdd((__bridge CFDictionaryRef)add, NULL);
+  }
+
+  if (status != errSecSuccess) {
+    if (error != NULL) {
+      *error = VelaKeychainError(status);
+    }
+    return nil;
+  }
+
+  return @{
+    @"id": accountId,
+    @"service_url": normalizedUrl,
+    @"auth_kind": VelaPermanentTokenAuthKind,
+  };
+}
+
+static NSString *VelaLoadAccountToken(NSString *accountId, NSError **error)
+{
+  NSDictionary *query = @{
+    (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+    (__bridge id)kSecAttrService: VelaAccountService,
+    (__bridge id)kSecAttrAccount: accountId,
+    (__bridge id)kSecReturnData: @YES,
+    (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
+  };
+
+  CFTypeRef rawResult = NULL;
+  OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &rawResult);
+  if (status != errSecSuccess) {
+    if (error != NULL) {
+      *error = VelaKeychainError(status);
+    }
+    return nil;
+  }
+
+  NSData *data = CFBridgingRelease(rawResult);
+  NSError *jsonError = nil;
+  NSDictionary *secret = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
+  if (![secret isKindOfClass:[NSDictionary class]] ||
+      ![secret[@"auth_kind"] isEqualToString:VelaPermanentTokenAuthKind] ||
+      ![secret[@"bearer_token"] isKindOfClass:[NSString class]]) {
+    if (error != NULL) {
+      *error = jsonError ?: [NSError errorWithDomain:@"VelaKeychain"
+                                                code:-1
+                                            userInfo:@{NSLocalizedDescriptionKey: @"Stored YouTrack credentials are invalid"}];
+    }
+    return nil;
+  }
+
+  return secret[@"bearer_token"];
+}
+
+static BOOL VelaDeleteAccount(NSString *accountId, NSError **error)
+{
+  NSDictionary *query = @{
+    (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+    (__bridge id)kSecAttrService: VelaAccountService,
+    (__bridge id)kSecAttrAccount: accountId,
+  };
+
+  OSStatus status = SecItemDelete((__bridge CFDictionaryRef)query);
+  if (status == errSecSuccess || status == errSecItemNotFound) {
+    return YES;
+  }
+
+  if (error != NULL) {
+    *error = VelaKeychainError(status);
+  }
+  return NO;
+}
 
 static void ResolveRustResponse(char *result,
                                 RCTPromiseResolveBlock resolve,
@@ -42,6 +249,78 @@ static void ResolveRustResponse(char *result,
 @implementation VelaRustModule
 
 RCT_EXPORT_MODULE(VelaRust)
+
+RCT_REMAP_METHOD(listAccounts,
+                 listAccountsWithResolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSError *error = nil;
+    NSArray<NSDictionary *> *entries = VelaAccountEntries(&error);
+    if (entries == nil) {
+      reject(@"vela_accounts", error.localizedDescription, error);
+      return;
+    }
+
+    NSMutableArray<NSDictionary *> *accounts = [NSMutableArray arrayWithCapacity:entries.count];
+    for (NSDictionary *entry in entries) {
+      [accounts addObject:VelaAccountMetadata(entry)];
+    }
+    [accounts sortUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
+      return [left[@"service_url"] localizedCaseInsensitiveCompare:right[@"service_url"]];
+    }];
+
+    resolve(accounts);
+  });
+}
+
+RCT_REMAP_METHOD(savePermanentTokenAccount,
+                 savePermanentTokenAccountWithServiceUrl:(NSString *)serviceUrl
+                 bearerToken:(NSString *)bearerToken
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSError *error = nil;
+    NSDictionary *account = VelaSavePermanentToken(serviceUrl, bearerToken, &error);
+    if (account == nil) {
+      reject(@"vela_accounts", error.localizedDescription, error);
+      return;
+    }
+    resolve(account);
+  });
+}
+
+RCT_REMAP_METHOD(deleteAccount,
+                 deleteAccountWithId:(NSString *)accountId
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSError *error = nil;
+    if (!VelaDeleteAccount(accountId, &error)) {
+      reject(@"vela_accounts", error.localizedDescription, error);
+      return;
+    }
+    resolve(nil);
+  });
+}
+
+RCT_REMAP_METHOD(loadAccountToken,
+                 loadAccountTokenWithId:(NSString *)accountId
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSError *error = nil;
+    NSString *token = VelaLoadAccountToken(accountId, &error);
+    if (token == nil) {
+      reject(@"vela_accounts", error.localizedDescription, error);
+      return;
+    }
+    resolve(token);
+  });
+}
 
 RCT_REMAP_METHOD(discover,
                  discoverWithServiceUrl:(NSString *)serviceUrl
