@@ -11,6 +11,28 @@ char *vela_load_my_work_json(
     const char *service_url,
     const char *bearer_token,
     size_t top);
+char *vela_discover_json(
+    const char *service_url,
+    const char *bearer_token);
+char *vela_project_schema_json(
+    const char *service_url,
+    const char *bearer_token,
+    const char *project_id);
+char *vela_users_json(
+    const char *service_url,
+    const char *bearer_token,
+    size_t skip,
+    size_t top);
+char *vela_agile_boards_json(
+    const char *service_url,
+    const char *bearer_token,
+    size_t skip,
+    size_t top);
+char *vela_saved_queries_json(
+    const char *service_url,
+    const char *bearer_token,
+    size_t skip,
+    size_t top);
 void vela_string_free(char *value);
 
 #ifdef __cplusplus

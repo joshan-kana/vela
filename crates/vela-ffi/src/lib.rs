@@ -3,7 +3,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::LazyLock;
 
 use serde::Serialize;
-use vela_core::{Issue, User};
+use vela_core::{AgileBoard, Issue, ProjectSchema, SavedQuery, User, UserRef, YouTrackDiscovery};
 use vela_youtrack::Client;
 
 #[derive(Serialize)]
@@ -25,14 +25,85 @@ pub extern "C" fn vela_load_my_work_json(
     bearer_token: *const c_char,
     top: usize,
 ) -> *mut c_char {
-    let response = catch_unwind(AssertUnwindSafe(|| {
+    ffi_json(|| {
         let service_url = read_required_string(service_url, "service URL")?;
         let bearer_token = read_optional_string(bearer_token)?;
 
         load_my_work(&service_url, bearer_token.as_deref(), top)
-    }));
+    })
+}
 
-    json_c_string(bridge_response_json(response))
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_discover_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+
+        discover(&service_url, bearer_token.as_deref())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_project_schema_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+    project_id: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+        let project_id = read_required_string(project_id, "project ID")?;
+
+        load_project_schema(&service_url, bearer_token.as_deref(), &project_id)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_users_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+    skip: usize,
+    top: usize,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+
+        load_users(&service_url, bearer_token.as_deref(), skip, top)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_agile_boards_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+    skip: usize,
+    top: usize,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+
+        load_agile_boards(&service_url, bearer_token.as_deref(), skip, top)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_saved_queries_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+    skip: usize,
+    top: usize,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+
+        load_saved_queries(&service_url, bearer_token.as_deref(), skip, top)
+    })
 }
 
 /// Frees a string allocated by the Vela FFI.
@@ -47,6 +118,85 @@ pub unsafe extern "C" fn vela_string_free(value: *mut c_char) {
         // SAFETY: value must have been returned by CString::into_raw in this crate.
         drop(unsafe { CString::from_raw(value) });
     }
+}
+
+fn ffi_json<T: Serialize>(operation: impl FnOnce() -> Result<T, String>) -> *mut c_char {
+    let response = catch_unwind(AssertUnwindSafe(operation));
+    json_c_string(bridge_response_json(response))
+}
+
+fn discover(service_url: &str, bearer_token: Option<&str>) -> Result<YouTrackDiscovery, String> {
+    let client = client(service_url, bearer_token)?;
+    let runtime = runtime()?;
+
+    runtime.block_on(async { client.discover().await.map_err(|error| error.to_string()) })
+}
+
+fn load_project_schema(
+    service_url: &str,
+    bearer_token: Option<&str>,
+    project_id: &str,
+) -> Result<ProjectSchema, String> {
+    let client = client(service_url, bearer_token)?;
+    let runtime = runtime()?;
+
+    runtime.block_on(async {
+        client
+            .project_schema(project_id)
+            .await
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn load_users(
+    service_url: &str,
+    bearer_token: Option<&str>,
+    skip: usize,
+    top: usize,
+) -> Result<Vec<UserRef>, String> {
+    let client = client(service_url, bearer_token)?;
+    let runtime = runtime()?;
+
+    runtime.block_on(async {
+        client
+            .users(skip, top)
+            .await
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn load_agile_boards(
+    service_url: &str,
+    bearer_token: Option<&str>,
+    skip: usize,
+    top: usize,
+) -> Result<Vec<AgileBoard>, String> {
+    let client = client(service_url, bearer_token)?;
+    let runtime = runtime()?;
+
+    runtime.block_on(async {
+        client
+            .agile_boards(skip, top)
+            .await
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn load_saved_queries(
+    service_url: &str,
+    bearer_token: Option<&str>,
+    skip: usize,
+    top: usize,
+) -> Result<Vec<SavedQuery>, String> {
+    let client = client(service_url, bearer_token)?;
+    let runtime = runtime()?;
+
+    runtime.block_on(async {
+        client
+            .saved_queries(skip, top)
+            .await
+            .map_err(|error| error.to_string())
+    })
 }
 
 fn load_my_work(
@@ -148,7 +298,10 @@ mod android {
         sys::{jint, jstring},
     };
 
-    use super::{bridge_response_json, load_my_work};
+    use super::{
+        bridge_response_json, discover, load_agile_boards, load_my_work, load_project_schema,
+        load_saved_queries, load_users,
+    };
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::sync::LazyLock;
 
@@ -164,6 +317,130 @@ mod android {
                 Ok(())
             })
             .resolve::<ThrowRuntimeExAndDefault>();
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_discoverJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        service_url: JString<'local>,
+        bearer_token: JString<'local>,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let service_url = service_url.try_to_string(env)?;
+                let bearer_token = bearer_token.try_to_string(env)?;
+
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    discover(&service_url, Some(&bearer_token))
+                }));
+                let json = bridge_response_json(response);
+
+                Ok(env.new_string(json)?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_loadProjectSchemaJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        service_url: JString<'local>,
+        bearer_token: JString<'local>,
+        project_id: JString<'local>,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let service_url = service_url.try_to_string(env)?;
+                let bearer_token = bearer_token.try_to_string(env)?;
+                let project_id = project_id.try_to_string(env)?;
+
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    load_project_schema(&service_url, Some(&bearer_token), &project_id)
+                }));
+                let json = bridge_response_json(response);
+
+                Ok(env.new_string(json)?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_usersJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        service_url: JString<'local>,
+        bearer_token: JString<'local>,
+        skip: jint,
+        top: jint,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let service_url = service_url.try_to_string(env)?;
+                let bearer_token = bearer_token.try_to_string(env)?;
+                let skip = usize::try_from(skip.max(0)).expect("non-negative jint must fit usize");
+                let top = usize::try_from(top.max(1)).expect("positive jint must fit usize");
+
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    load_users(&service_url, Some(&bearer_token), skip, top)
+                }));
+                let json = bridge_response_json(response);
+
+                Ok(env.new_string(json)?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_agileBoardsJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        service_url: JString<'local>,
+        bearer_token: JString<'local>,
+        skip: jint,
+        top: jint,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let service_url = service_url.try_to_string(env)?;
+                let bearer_token = bearer_token.try_to_string(env)?;
+                let skip = usize::try_from(skip.max(0)).expect("non-negative jint must fit usize");
+                let top = usize::try_from(top.max(1)).expect("positive jint must fit usize");
+
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    load_agile_boards(&service_url, Some(&bearer_token), skip, top)
+                }));
+                let json = bridge_response_json(response);
+
+                Ok(env.new_string(json)?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_savedQueriesJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        service_url: JString<'local>,
+        bearer_token: JString<'local>,
+        skip: jint,
+        top: jint,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let service_url = service_url.try_to_string(env)?;
+                let bearer_token = bearer_token.try_to_string(env)?;
+                let skip = usize::try_from(skip.max(0)).expect("non-negative jint must fit usize");
+                let top = usize::try_from(top.max(1)).expect("positive jint must fit usize");
+
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    load_saved_queries(&service_url, Some(&bearer_token), skip, top)
+                }));
+                let json = bridge_response_json(response);
+
+                Ok(env.new_string(json)?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
     }
 
     #[unsafe(no_mangle)]
