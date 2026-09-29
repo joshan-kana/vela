@@ -20,6 +20,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   private let connectionStack = NSStackView()
   private let savedAccountsStack = NSStackView()
   private let accountStack = NSStackView()
+  private let newIssueButton = NSButton(title: "New issue", target: nil, action: nil)
   private let disconnectButton = NSButton(title: "Disconnect", target: nil, action: nil)
   private let tableView = NSTableView()
   private let scrollView = NSScrollView()
@@ -28,6 +29,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   private var connectedServiceURL = ""
   private var connectedAccountID: String?
   private var inspector: IssueInspectorViewController?
+  private var quickCreate: QuickCreateViewController?
   private var oauthLoopbackServer: OAuthLoopbackServer?
 
   override func loadView() {
@@ -104,11 +106,18 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     accountName.font = .systemFont(ofSize: 14, weight: .semibold)
     accountDetail.textColor = .secondaryLabelColor
 
+    newIssueButton.target = self
+    newIssueButton.action = #selector(showQuickCreate)
+    newIssueButton.bezelStyle = .inline
+
     disconnectButton.target = self
     disconnectButton.action = #selector(disconnect)
     disconnectButton.bezelStyle = .inline
 
-    accountStack.setViews([accountName, accountDetail, disconnectButton], in: .top)
+    accountStack.setViews(
+      [accountName, accountDetail, newIssueButton, disconnectButton],
+      in: .top
+    )
     accountStack.orientation = .vertical
     accountStack.alignment = .leading
     accountStack.spacing = 2
@@ -498,6 +507,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
 
   @objc private func disconnect() {
     hideInspector()
+    hideQuickCreate()
     issues = []
     connectedServiceURL = ""
     connectedAccountID = nil
@@ -519,15 +529,19 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   }
 
   private func showInspector(for issue: MyWorkIssue) {
-    guard inspector == nil, !connectedServiceURL.isEmpty else {
+    showInspector(issueID: issue.id, preview: issue)
+  }
+
+  private func showInspector(issueID: String, preview: MyWorkIssue? = nil) {
+    guard inspector == nil, quickCreate == nil, !connectedServiceURL.isEmpty else {
       return
     }
 
     let inspector = IssueInspectorViewController(
       serviceURL: connectedServiceURL,
       accountID: connectedAccountID,
-      issueID: issue.id,
-      preview: issue,
+      issueID: issueID,
+      preview: preview,
       onBack: { [weak self] in
         self?.hideInspector()
       },
@@ -548,6 +562,47 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     ])
 
     self.inspector = inspector
+  }
+
+  @objc private func showQuickCreate() {
+    guard quickCreate == nil, inspector == nil, !connectedServiceURL.isEmpty else {
+      return
+    }
+
+    let quickCreate = QuickCreateViewController(
+      serviceURL: connectedServiceURL,
+      accountID: connectedAccountID,
+      onCancel: { [weak self] in
+        self?.hideQuickCreate()
+      },
+      onCreated: { [weak self] issue in
+        self?.hideQuickCreate()
+        self?.showInspector(issueID: issue.id)
+      }
+    )
+
+    addChild(quickCreate)
+    quickCreate.view.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(quickCreate.view)
+
+    NSLayoutConstraint.activate([
+      quickCreate.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      quickCreate.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      quickCreate.view.topAnchor.constraint(equalTo: view.topAnchor),
+      quickCreate.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+    ])
+
+    self.quickCreate = quickCreate
+  }
+
+  private func hideQuickCreate() {
+    guard let quickCreate else {
+      return
+    }
+
+    quickCreate.view.removeFromSuperview()
+    quickCreate.removeFromParent()
+    self.quickCreate = nil
   }
 
   private func hideInspector() {
