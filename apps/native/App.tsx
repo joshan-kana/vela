@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -13,6 +13,14 @@ import {
 
 import IssueInspector from './src/components/IssueInspector';
 import {
+  deleteAccount,
+  listAccounts,
+  savePermanentTokenAccount,
+  withConnection,
+  type Connection,
+  type StoredAccount,
+} from './src/native/AccountStore';
+import {
   loadMyWork,
   type IssueDetails,
   type MyWork,
@@ -24,16 +32,41 @@ function App() {
   const dark = useColorScheme() === 'dark';
   const palette = dark ? darkPalette : lightPalette;
 
+  const tokenInputRef = useRef<TextInput>(null);
+  const tokenValueRef = useRef('');
   const [serviceUrl, setServiceUrl] = useState('');
-  const [token, setToken] = useState('');
+  const [accounts, setAccounts] = useState<StoredAccount[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(true);
   const [work, setWork] = useState<MyWork | null>(null);
-  const [session, setSession] = useState<{
-    serviceUrl: string;
-    bearerToken: string;
-  } | null>(null);
+  const [session, setSession] = useState<Connection | null>(null);
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    listAccounts()
+      .then(stored => {
+        if (active) {
+          setAccounts(stored);
+        }
+      })
+      .catch(accountError => {
+        if (active) {
+          setError(message(accountError, 'Unable to load saved accounts'));
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setAccountsLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function connect() {
     const trimmedUrl = serviceUrl.trim();
@@ -44,21 +77,79 @@ function App() {
     setConnecting(true);
     setError(null);
 
+    const enteredToken = tokenValueRef.current.trim();
+
     try {
-      const loadedWork = await loadMyWork(trimmedUrl, token);
+      const loadedWork = await loadMyWork(trimmedUrl, enteredToken);
+      let account: StoredAccount | null = null;
+
+      if (enteredToken) {
+        account = await savePermanentTokenAccount(trimmedUrl, enteredToken);
+        rememberAccount(account);
+      }
+
       setWork(loadedWork);
-      setSession({ serviceUrl: trimmedUrl, bearerToken: token });
-      setToken('');
+      setSession({
+        service_url: trimmedUrl,
+        account_id: account?.id ?? null,
+      });
+      tokenValueRef.current = '';
+      tokenInputRef.current?.clear();
     } catch (connectionError) {
       setWork(null);
-      setError(
-        connectionError instanceof Error
-          ? connectionError.message
-          : 'Unable to connect to YouTrack',
-      );
+      setError(message(connectionError, 'Unable to connect to YouTrack'));
     } finally {
       setConnecting(false);
     }
+  }
+
+  async function connectStored(account: StoredAccount) {
+    if (connecting) {
+      return;
+    }
+
+    const connection: Connection = {
+      service_url: account.service_url,
+      account_id: account.id,
+    };
+
+    setConnecting(true);
+    setError(null);
+
+    try {
+      const loadedWork = await withConnection(connection, loadMyWork);
+      setServiceUrl(account.service_url);
+      setWork(loadedWork);
+      setSession(connection);
+    } catch (connectionError) {
+      setWork(null);
+      setError(message(connectionError, 'Unable to connect to YouTrack'));
+    } finally {
+      setConnecting(false);
+    }
+  }
+
+  async function forgetAccount(account: StoredAccount) {
+    try {
+      await deleteAccount(account.id);
+      setAccounts(current => current.filter(item => item.id !== account.id));
+    } catch (accountError) {
+      setError(message(accountError, 'Unable to forget the account'));
+    }
+  }
+
+  function rememberAccount(account: StoredAccount) {
+    setAccounts(current =>
+      [...current.filter(item => item.id !== account.id), account].sort(
+        (left, right) => left.service_url.localeCompare(right.service_url),
+      ),
+    );
+  }
+
+  function disconnect() {
+    setSelectedIssueId(null);
+    setSession(null);
+    setWork(null);
   }
 
   return (
@@ -101,7 +192,7 @@ function App() {
       <View style={styles.content}>
         {selectedIssueId && session ? (
           <IssueInspector
-            bearerToken={session.bearerToken}
+            connection={session}
             issueId={selectedIssueId}
             onBack={() => setSelectedIssueId(null)}
             onIssueChanged={(updated: IssueDetails) => {
@@ -123,7 +214,6 @@ function App() {
               );
             }}
             palette={palette}
-            serviceUrl={session.serviceUrl}
           />
         ) : (
           <>
@@ -142,10 +232,22 @@ function App() {
                   <Text style={[styles.accountName, { color: palette.text }]}>
                     {work.user.full_name}
                   </Text>
-                  <Text style={{ color: palette.secondaryText }}>
-                    {work.user.login}
-                    {work.user.guest ? ' · Guest access' : ''}
-                  </Text>
+                  <View style={styles.accountIdentity}>
+                    <Text style={{ color: palette.secondaryText }}>
+                      {work.user.login}
+                      {work.user.guest ? ' · Guest access' : ''}
+                    </Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={disconnect}
+                      style={({ pressed }) => [
+                        styles.textButton,
+                        pressed && styles.buttonPressed,
+                      ]}
+                    >
+                      <Text style={{ color: palette.accent }}>Disconnect</Text>
+                    </Pressable>
+                  </View>
                 </View>
 
                 <FlatList
@@ -218,6 +320,62 @@ function App() {
                 </Text>
 
                 <View style={styles.form}>
+                  {accountsLoading ? (
+                    <ActivityIndicator />
+                  ) : accounts.length > 0 ? (
+                    <View style={styles.savedAccounts}>
+                      <Text
+                        style={[
+                          styles.savedAccountsTitle,
+                          { color: palette.secondaryText },
+                        ]}
+                      >
+                        Saved accounts
+                      </Text>
+                      {accounts.map(account => (
+                        <View
+                          key={account.id}
+                          style={[
+                            styles.savedAccountRow,
+                            { borderColor: palette.separator },
+                          ]}
+                        >
+                          <Pressable
+                            accessibilityLabel={`Connect ${account.service_url}`}
+                            accessibilityRole="button"
+                            disabled={connecting}
+                            onPress={() => void connectStored(account)}
+                            style={({ pressed }) => [
+                              styles.savedAccountButton,
+                              pressed && styles.buttonPressed,
+                            ]}
+                          >
+                            <Text
+                              numberOfLines={1}
+                              style={{ color: palette.text }}
+                            >
+                              {account.service_url}
+                            </Text>
+                          </Pressable>
+                          <Pressable
+                            accessibilityLabel={`Forget ${account.service_url}`}
+                            accessibilityRole="button"
+                            disabled={connecting}
+                            onPress={() => void forgetAccount(account)}
+                            style={({ pressed }) => [
+                              styles.forgetButton,
+                              pressed && styles.buttonPressed,
+                            ]}
+                          >
+                            <Text style={{ color: palette.secondaryText }}>
+                              Forget
+                            </Text>
+                          </Pressable>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+
                   <TextInput
                     accessibilityLabel="YouTrack address"
                     autoCapitalize="none"
@@ -236,10 +394,13 @@ function App() {
                     value={serviceUrl}
                   />
                   <TextInput
+                    ref={tokenInputRef}
                     accessibilityLabel="Permanent token"
                     autoCapitalize="none"
                     autoCorrect={false}
-                    onChangeText={setToken}
+                    onChangeText={value => {
+                      tokenValueRef.current = value;
+                    }}
                     onSubmitEditing={connect}
                     placeholder="Permanent token (optional)"
                     placeholderTextColor={palette.secondaryText}
@@ -251,7 +412,6 @@ function App() {
                         color: palette.text,
                       },
                     ]}
-                    value={token}
                   />
 
                   {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -282,6 +442,10 @@ function App() {
       </View>
     </View>
   );
+}
+
+function message(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
 }
 
 const lightPalette = {
@@ -356,6 +520,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 2,
   },
+  accountIdentity: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+  },
+  textButton: {
+    paddingVertical: 4,
+  },
   issueRow: {
     alignItems: 'center',
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -401,6 +573,29 @@ const styles = StyleSheet.create({
   form: {
     gap: 10,
     width: 360,
+  },
+  savedAccounts: {
+    gap: 8,
+    marginBottom: 4,
+  },
+  savedAccountsTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  savedAccountRow: {
+    alignItems: 'center',
+    borderRadius: 7,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+  },
+  savedAccountButton: {
+    flex: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  forgetButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 9,
   },
   input: {
     borderRadius: 7,

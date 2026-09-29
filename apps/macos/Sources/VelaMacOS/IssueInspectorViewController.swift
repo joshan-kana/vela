@@ -2,7 +2,7 @@ import AppKit
 
 final class IssueInspectorViewController: NSViewController {
   private let serviceURL: String
-  private let bearerToken: String
+  private let accountID: String?
   private let issueID: String
   private let preview: MyWorkIssue?
   private let onBack: () -> Void
@@ -28,14 +28,14 @@ final class IssueInspectorViewController: NSViewController {
 
   init(
     serviceURL: String,
-    bearerToken: String,
+    accountID: String?,
     issueID: String,
     preview: MyWorkIssue? = nil,
     onBack: @escaping () -> Void,
     onIssueChanged: @escaping (IssueDetails) -> Void
   ) {
     self.serviceURL = serviceURL
-    self.bearerToken = bearerToken
+    self.accountID = accountID
     self.issueID = issueID
     self.preview = preview
     self.onBack = onBack
@@ -195,12 +195,12 @@ final class IssueInspectorViewController: NSViewController {
       }
 
       do {
+        let bearerToken = try self.bearerToken()
         let issue = try RustBridge.loadIssueDetails(
           serviceURL: self.serviceURL,
-          bearerToken: self.bearerToken,
+          bearerToken: bearerToken,
           issueID: self.issueID
         )
-
         DispatchQueue.main.async {
           self.details = issue
           self.schema = nil
@@ -212,7 +212,7 @@ final class IssueInspectorViewController: NSViewController {
 
         let enrichment = try RustBridge.loadIssueEnrichment(
           serviceURL: self.serviceURL,
-          bearerToken: self.bearerToken,
+          bearerToken: bearerToken,
           issueID: self.issueID,
           projectID: issue.project.id
         )
@@ -232,6 +232,14 @@ final class IssueInspectorViewController: NSViewController {
         }
       }
     }
+  }
+
+  private func bearerToken() throws -> String {
+    guard let accountID else {
+      return ""
+    }
+
+    return try SecureAccountStore.bearerToken(for: accountID)
   }
 
   private func render() {
@@ -497,9 +505,10 @@ final class IssueInspectorViewController: NSViewController {
     }
 
     mutate {
-      try RustBridge.setIssueSummary(
+      let bearerToken = try self.bearerToken()
+      return try RustBridge.setIssueSummary(
         serviceURL: self.serviceURL,
-        bearerToken: self.bearerToken,
+        bearerToken: bearerToken,
         issueID: details.id,
         summary: summary
       )
@@ -519,9 +528,10 @@ final class IssueInspectorViewController: NSViewController {
     }
 
     mutate {
-      try RustBridge.setIssueDescription(
+      let bearerToken = try self.bearerToken()
+      return try RustBridge.setIssueDescription(
         serviceURL: self.serviceURL,
-        bearerToken: self.bearerToken,
+        bearerToken: bearerToken,
         issueID: details.id,
         description: description.isEmpty ? nil : description
       )
@@ -536,9 +546,10 @@ final class IssueInspectorViewController: NSViewController {
     }
 
     mutate {
-      try RustBridge.setCustomFieldValue(
+      let bearerToken = try self.bearerToken()
+      return try RustBridge.setCustomFieldValue(
         serviceURL: self.serviceURL,
-        bearerToken: self.bearerToken,
+        bearerToken: bearerToken,
         issueID: details.id,
         fieldID: field.id,
         fieldType: field.fieldType,
@@ -555,9 +566,10 @@ final class IssueInspectorViewController: NSViewController {
     }
 
     mutate {
-      try RustBridge.applyCustomFieldEvent(
+      let bearerToken = try self.bearerToken()
+      return try RustBridge.applyCustomFieldEvent(
         serviceURL: self.serviceURL,
-        bearerToken: self.bearerToken,
+        bearerToken: bearerToken,
         issueID: details.id,
         fieldID: field.id,
         fieldType: field.fieldType,

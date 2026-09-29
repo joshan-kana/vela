@@ -10,13 +10,15 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   private let accountName = NSTextField(labelWithString: "")
   private let accountDetail = NSTextField(labelWithString: "")
   private let connectionStack = NSStackView()
+  private let savedAccountsStack = NSStackView()
   private let accountStack = NSStackView()
+  private let disconnectButton = NSButton(title: "Disconnect", target: nil, action: nil)
   private let tableView = NSTableView()
   private let scrollView = NSScrollView()
 
   private var issues: [MyWorkIssue] = []
   private var connectedServiceURL = ""
-  private var connectedBearerToken = ""
+  private var connectedAccountID: String?
   private var inspector: IssueInspectorViewController?
 
   override func loadView() {
@@ -42,8 +44,13 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     errorLabel.maximumNumberOfLines = 3
     errorLabel.isHidden = true
 
+    savedAccountsStack.orientation = .vertical
+    savedAccountsStack.alignment = .leading
+    savedAccountsStack.spacing = 6
+    savedAccountsStack.widthAnchor.constraint(equalToConstant: 360).isActive = true
+
     connectionStack.setViews(
-      [serviceURLField, tokenField, connectButton, progress, errorLabel],
+      [savedAccountsStack, serviceURLField, tokenField, connectButton, progress, errorLabel],
       in: .top
     )
     connectionStack.orientation = .vertical
@@ -57,7 +64,11 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     accountName.font = .systemFont(ofSize: 14, weight: .semibold)
     accountDetail.textColor = .secondaryLabelColor
 
-    accountStack.setViews([accountName, accountDetail], in: .top)
+    disconnectButton.target = self
+    disconnectButton.action = #selector(disconnect)
+    disconnectButton.bezelStyle = .inline
+
+    accountStack.setViews([accountName, accountDetail, disconnectButton], in: .top)
     accountStack.orientation = .vertical
     accountStack.alignment = .leading
     accountStack.spacing = 2
@@ -101,6 +112,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     ])
 
     view = root
+    refreshSavedAccounts()
   }
 
   @objc private func connect() {
@@ -119,13 +131,23 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
           serviceURL: serviceURL,
           bearerToken: token
         )
+        let accountID: String?
+        if token.isEmpty {
+          accountID = nil
+        } else {
+          accountID = try SecureAccountStore.savePermanentToken(
+            serviceURL: serviceURL,
+            bearerToken: token
+          ).id
+        }
 
         DispatchQueue.main.async {
           self?.show(
             work,
             serviceURL: serviceURL,
-            bearerToken: token
+            accountID: accountID
           )
+          self?.refreshSavedAccounts()
         }
       } catch {
         DispatchQueue.main.async {
@@ -151,13 +173,13 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   private func show(
     _ work: MyWork,
     serviceURL: String,
-    bearerToken: String
+    accountID: String?
   ) {
     setConnecting(false)
     tokenField.stringValue = ""
 
     connectedServiceURL = serviceURL
-    connectedBearerToken = bearerToken
+    connectedAccountID = accountID
     issues = work.issues
     accountName.stringValue = work.user.fullName
     accountDetail.stringValue =
@@ -173,6 +195,103 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     setConnecting(false)
     errorLabel.stringValue = error.localizedDescription
     errorLabel.isHidden = false
+  }
+
+  private func refreshSavedAccounts() {
+    for view in savedAccountsStack.arrangedSubviews {
+      savedAccountsStack.removeArrangedSubview(view)
+      view.removeFromSuperview()
+    }
+
+    do {
+      let accounts = try SecureAccountStore.accounts()
+      savedAccountsStack.isHidden = accounts.isEmpty
+
+      guard !accounts.isEmpty else {
+        return
+      }
+
+      let title = NSTextField(labelWithString: "Saved accounts")
+      title.textColor = .secondaryLabelColor
+      title.font = .systemFont(ofSize: 12, weight: .semibold)
+      savedAccountsStack.addArrangedSubview(title)
+
+      for account in accounts {
+        let connect = AccountActionButton(title: account.serviceURL) { [weak self] in
+          self?.connectStored(account: account)
+        }
+        connect.alignment = .left
+        connect.lineBreakMode = .byTruncatingMiddle
+
+        let forget = AccountActionButton(title: "Forget") { [weak self] in
+          self?.forget(account: account)
+        }
+        forget.bezelStyle = .inline
+
+        let row = NSStackView(views: [connect, forget])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        row.widthAnchor.constraint(equalToConstant: 360).isActive = true
+        connect.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        savedAccountsStack.addArrangedSubview(row)
+      }
+    } catch {
+      errorLabel.stringValue = error.localizedDescription
+      errorLabel.isHidden = false
+    }
+  }
+
+  private func connectStored(account: StoredAccount) {
+    guard connectedServiceURL.isEmpty else {
+      return
+    }
+
+    setConnecting(true)
+
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      do {
+        let token = try SecureAccountStore.bearerToken(for: account.id)
+        let work = try RustBridge.loadMyWork(
+          serviceURL: account.serviceURL,
+          bearerToken: token
+        )
+
+        DispatchQueue.main.async {
+          self?.serviceURLField.stringValue = account.serviceURL
+          self?.show(
+            work,
+            serviceURL: account.serviceURL,
+            accountID: account.id
+          )
+        }
+      } catch {
+        DispatchQueue.main.async {
+          self?.show(error: error)
+        }
+      }
+    }
+  }
+
+  private func forget(account: StoredAccount) {
+    do {
+      try SecureAccountStore.delete(accountID: account.id)
+      refreshSavedAccounts()
+    } catch {
+      show(error: error)
+    }
+  }
+
+  @objc private func disconnect() {
+    hideInspector()
+    issues = []
+    connectedServiceURL = ""
+    connectedAccountID = nil
+    accountStack.isHidden = true
+    scrollView.isHidden = true
+    connectionStack.isHidden = false
+    tableView.reloadData()
+    refreshSavedAccounts()
   }
 
   func tableViewSelectionDidChange(_ notification: Notification) {
@@ -191,7 +310,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
 
     let inspector = IssueInspectorViewController(
       serviceURL: connectedServiceURL,
-      bearerToken: connectedBearerToken,
+      accountID: connectedAccountID,
       issueID: issue.id,
       preview: issue,
       onBack: { [weak self] in
@@ -285,5 +404,27 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     field.attributedStringValue = value
 
     return field
+  }
+}
+
+private final class AccountActionButton: NSButton {
+  private let handler: () -> Void
+
+  init(title: String, handler: @escaping () -> Void) {
+    self.handler = handler
+    super.init(frame: .zero)
+    self.title = title
+    bezelStyle = .rounded
+    target = self
+    action = #selector(invoke)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  @objc private func invoke() {
+    handler()
   }
 }
