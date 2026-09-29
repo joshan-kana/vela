@@ -10,6 +10,8 @@ import {
   withConnection,
 } from '../src/native/AccountStore';
 import {
+  discoverYouTrack,
+  executeIssueAction,
   loadIssueDetails,
   loadIssueLinks,
   loadMyWork,
@@ -27,6 +29,8 @@ jest.mock('../src/native/AccountStore', () => ({
 
 jest.mock('../src/native/VelaRust', () => ({
   applyCustomFieldEvent: jest.fn(),
+  discoverYouTrack: jest.fn(),
+  executeIssueAction: jest.fn(),
   loadIssueDetails: jest.fn(),
   loadIssueLinks: jest.fn(),
   loadMyWork: jest.fn(),
@@ -40,6 +44,8 @@ const mockBeginOAuth = jest.mocked(beginOAuth);
 const mockListAccounts = jest.mocked(listAccounts);
 const mockSavePermanentTokenAccount = jest.mocked(savePermanentTokenAccount);
 const mockWithConnection = jest.mocked(withConnection);
+const mockDiscoverYouTrack = jest.mocked(discoverYouTrack);
+const mockExecuteIssueAction = jest.mocked(executeIssueAction);
 const mockLoadMyWork = jest.mocked(loadMyWork);
 const mockLoadIssueDetails = jest.mocked(loadIssueDetails);
 const mockLoadIssueLinks = jest.mocked(loadIssueLinks);
@@ -275,6 +281,125 @@ test('reconnects a saved account without putting its token in UI state', async (
   expect(mockLoadMyWork).toHaveBeenCalledWith(
     'https://saved.youtrack.cloud',
     'stored-token',
+  );
+});
+
+test('creates an issue through the shared action layer and opens it', async () => {
+  mockLoadMyWork.mockResolvedValueOnce({
+    user: {
+      id: '1-1',
+      login: 'joshan',
+      full_name: 'Joshan',
+      email: null,
+      guest: false,
+    },
+    issues: [],
+  });
+  mockDiscoverYouTrack.mockResolvedValueOnce({
+    projects: {
+      capability: 'available',
+      items: [
+        {
+          id: '0-7',
+          short_name: 'vela',
+          name: 'Vela',
+          archived: false,
+        },
+      ],
+    },
+    users: 'available',
+    issue_link_types: { capability: 'available', items: [] },
+    agile_boards: 'available',
+    saved_queries: 'available',
+  });
+
+  const created = {
+    id: '2-5',
+    id_readable: 'vela-5',
+    summary: 'Add quick creation',
+    description: 'Created from Vela',
+    created_at: 1780000000000,
+    updated_at: 1780000000000,
+    resolved_at: null,
+    project: {
+      id: '0-7',
+      short_name: 'vela',
+      name: 'Vela',
+      archived: false,
+    },
+    custom_fields: [],
+  };
+  mockExecuteIssueAction.mockResolvedValueOnce({
+    kind: 'issue',
+    issue: created,
+  });
+  mockLoadIssueDetails.mockResolvedValueOnce(created);
+  mockLoadProjectSchema.mockResolvedValueOnce({
+    project: created.project,
+    custom_fields: [],
+  });
+  mockLoadIssueLinks.mockResolvedValueOnce([]);
+
+  let renderer: ReactTestRenderer.ReactTestRenderer;
+
+  await ReactTestRenderer.act(async () => {
+    renderer = ReactTestRenderer.create(<App />);
+    await Promise.resolve();
+  });
+
+  await ReactTestRenderer.act(() => {
+    renderer!.root
+      .findByProps({ accessibilityLabel: 'YouTrack address' })
+      .props.onChangeText('https://example.youtrack.cloud');
+  });
+  await ReactTestRenderer.act(async () => {
+    await renderer!.root
+      .findByProps({
+        accessibilityLabel: 'Connect with token or guest access',
+      })
+      .props.onPress();
+  });
+
+  await ReactTestRenderer.act(async () => {
+    renderer!.root
+      .findByProps({ accessibilityLabel: 'New issue' })
+      .props.onPress();
+    await Promise.resolve();
+  });
+
+  await ReactTestRenderer.act(() => {
+    renderer!.root
+      .findByProps({ accessibilityLabel: 'New issue summary' })
+      .props.onChangeText('Add quick creation');
+    renderer!.root
+      .findByProps({ accessibilityLabel: 'New issue description' })
+      .props.onChangeText('Created from Vela');
+  });
+
+  await ReactTestRenderer.act(async () => {
+    await renderer!.root
+      .findByProps({ accessibilityLabel: 'Create issue' })
+      .props.onPress();
+  });
+
+  expect(mockDiscoverYouTrack).toHaveBeenCalledWith(
+    'https://example.youtrack.cloud',
+    '',
+  );
+  expect(mockExecuteIssueAction).toHaveBeenCalledWith(
+    'https://example.youtrack.cloud',
+    '',
+    {
+      kind: 'create_issue',
+      project_id: '0-7',
+      summary: 'Add quick creation',
+      description: 'Created from Vela',
+    },
+  );
+  expect(mockLoadIssueDetails).toHaveBeenCalledWith(
+    'https://example.youtrack.cloud',
+    '',
+    '2-5',
   );
 });
 
