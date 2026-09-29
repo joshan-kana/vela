@@ -3,8 +3,16 @@ import AppKit
 final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
   private let titleLabel = NSTextField(labelWithString: "My Work")
   private let serviceURLField = NSTextField()
+  private let oauthClientIDField = NSTextField()
+  private let oauthHubURLField = NSTextField()
+  private let oauthScopeField = NSTextField()
+  private let oauthConnectButton = NSButton(title: "Connect with OAuth", target: nil, action: nil)
   private let tokenField = NSSecureTextField()
-  private let connectButton = NSButton(title: "Connect", target: nil, action: nil)
+  private let connectButton = NSButton(
+    title: "Connect with token or guest access",
+    target: nil,
+    action: nil
+  )
   private let progress = NSProgressIndicator()
   private let errorLabel = NSTextField(wrappingLabelWithString: "")
   private let accountName = NSTextField(labelWithString: "")
@@ -29,6 +37,18 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     serviceURLField.placeholderString = "https://youtrack.example.com"
     serviceURLField.setAccessibilityLabel("YouTrack address")
 
+    oauthClientIDField.placeholderString = "OAuth client ID"
+    oauthClientIDField.setAccessibilityLabel("OAuth client ID")
+
+    oauthHubURLField.placeholderString = "Hub address override (optional)"
+    oauthHubURLField.setAccessibilityLabel("Hub address")
+
+    oauthScopeField.placeholderString = "OAuth scope override (optional)"
+    oauthScopeField.setAccessibilityLabel("OAuth scope")
+
+    oauthConnectButton.target = self
+    oauthConnectButton.action = #selector(connectOAuth)
+
     tokenField.placeholderString = "Permanent token (optional)"
     tokenField.setAccessibilityLabel("Permanent token")
 
@@ -49,8 +69,23 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     savedAccountsStack.spacing = 6
     savedAccountsStack.widthAnchor.constraint(equalToConstant: 360).isActive = true
 
+    let authDivider = NSTextField(labelWithString: "or")
+    authDivider.textColor = .secondaryLabelColor
+
     connectionStack.setViews(
-      [savedAccountsStack, serviceURLField, tokenField, connectButton, progress, errorLabel],
+      [
+        savedAccountsStack,
+        serviceURLField,
+        oauthClientIDField,
+        oauthHubURLField,
+        oauthScopeField,
+        oauthConnectButton,
+        authDivider,
+        tokenField,
+        connectButton,
+        progress,
+        errorLabel,
+      ],
       in: .top
     )
     connectionStack.orientation = .vertical
@@ -58,8 +93,12 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     connectionStack.spacing = 10
 
     serviceURLField.widthAnchor.constraint(equalToConstant: 360).isActive = true
+    oauthClientIDField.widthAnchor.constraint(equalToConstant: 360).isActive = true
+    oauthHubURLField.widthAnchor.constraint(equalToConstant: 360).isActive = true
+    oauthScopeField.widthAnchor.constraint(equalToConstant: 360).isActive = true
+    oauthConnectButton.widthAnchor.constraint(equalToConstant: 220).isActive = true
     tokenField.widthAnchor.constraint(equalToConstant: 360).isActive = true
-    connectButton.widthAnchor.constraint(equalToConstant: 120).isActive = true
+    connectButton.widthAnchor.constraint(equalToConstant: 260).isActive = true
 
     accountName.font = .systemFont(ofSize: 14, weight: .semibold)
     accountDetail.textColor = .secondaryLabelColor
@@ -113,6 +152,135 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
 
     view = root
     refreshSavedAccounts()
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(handleOAuthCallback(_:)),
+      name: .velaOAuthCallback,
+      object: nil
+    )
+  }
+
+  deinit {
+    NotificationCenter.default.removeObserver(self)
+  }
+
+  @objc private func connectOAuth() {
+    let serviceURL = serviceURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    let clientID = oauthClientIDField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    let hubURL = oauthHubURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    let scope = oauthScopeField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard !serviceURL.isEmpty, !clientID.isEmpty else {
+      NSSound.beep()
+      return
+    }
+
+    setConnecting(true)
+
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      do {
+        let authorization = try RustBridge.beginOAuth(
+          serviceURL: serviceURL,
+          hubURL: hubURL.isEmpty ? nil : hubURL,
+          clientID: clientID,
+          redirectURI: Self.oauthRedirectURI,
+          scope: scope.isEmpty ? Self.defaultOAuthScope : scope
+        )
+        try SecureAccountStore.savePendingOAuth(
+          serviceURL: serviceURL,
+          authorization: authorization
+        )
+
+        guard let authorizationURL = URL(string: authorization.authorizationURL) else {
+          throw SecureAccountStoreError.oauth("OAuth authorization URL is invalid.")
+        }
+
+        DispatchQueue.main.async {
+          self?.setConnecting(false)
+          NSWorkspace.shared.open(authorizationURL)
+        }
+      } catch {
+        DispatchQueue.main.async {
+          self?.show(error: error)
+        }
+      }
+    }
+  }
+
+  @objc private func handleOAuthCallback(_ notification: Notification) {
+    guard
+      let callback = notification.object as? String,
+      let components = URLComponents(string: callback),
+      components.scheme == Self.oauthScheme,
+      components.path == Self.oauthCallbackPath
+    else {
+      return
+    }
+
+    let state = components.queryItems?.first { $0.name == "state" }?.value
+    if let oauthError = components.queryItems?.first(where: { $0.name == "error" })?.value {
+      if let state {
+        try? SecureAccountStore.deletePendingOAuth(state: state)
+      }
+      let description =
+        components.queryItems?.first { $0.name == "error_description" }?.value
+      show(
+        error: SecureAccountStoreError.oauth(
+          description.map { "\(oauthError): \($0)" } ?? oauthError
+        )
+      )
+      return
+    }
+
+    guard
+      let state,
+      let code = components.queryItems?.first(where: { $0.name == "code" })?.value
+    else {
+      show(error: SecureAccountStoreError.oauth("OAuth callback is missing code or state."))
+      return
+    }
+
+    setConnecting(true)
+
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      do {
+        let pending = try SecureAccountStore.pendingOAuth(state: state)
+        let authorization = pending.authorization
+        let tokens = try RustBridge.exchangeOAuthCode(
+          hubURL: authorization.hubURL,
+          clientID: authorization.clientID,
+          redirectURI: authorization.redirectURI,
+          codeVerifier: authorization.codeVerifier,
+          code: code
+        )
+        let account = try SecureAccountStore.saveOAuthAccount(
+          serviceURL: pending.serviceURL,
+          authorization: authorization,
+          tokens: tokens
+        )
+        try SecureAccountStore.deletePendingOAuth(state: state)
+
+        let bearerToken = try SecureAccountStore.bearerToken(for: account.id)
+        let work = try RustBridge.loadMyWork(
+          serviceURL: account.serviceURL,
+          bearerToken: bearerToken
+        )
+
+        DispatchQueue.main.async {
+          self?.serviceURLField.stringValue = account.serviceURL
+          self?.show(
+            work,
+            serviceURL: account.serviceURL,
+            accountID: account.id
+          )
+          self?.refreshSavedAccounts()
+        }
+      } catch {
+        DispatchQueue.main.async {
+          self?.show(error: error)
+        }
+      }
+    }
   }
 
   @objc private func connect() {
@@ -159,7 +327,11 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
 
   private func setConnecting(_ connecting: Bool) {
     connectButton.isEnabled = !connecting
+    oauthConnectButton.isEnabled = !connecting
     serviceURLField.isEnabled = !connecting
+    oauthClientIDField.isEnabled = !connecting
+    oauthHubURLField.isEnabled = !connecting
+    oauthScopeField.isEnabled = !connecting
     tokenField.isEnabled = !connecting
     errorLabel.isHidden = true
 
@@ -405,6 +577,10 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
 
     return field
   }
+  private static let oauthScheme = "io.github.joshankana.vela"
+  private static let oauthCallbackPath = "/oauth/callback"
+  private static let oauthRedirectURI = "\(oauthScheme):\(oauthCallbackPath)"
+  private static let defaultOAuthScope = "YouTrack"
 }
 
 private final class AccountActionButton: NSButton {
