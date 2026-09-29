@@ -5,10 +5,25 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use thiserror::Error;
 use url::Url;
-use vela_core::{CustomFieldValue, Issue, User};
+use vela_core::{
+    AgileBoard, BundleValue, CapabilityState, CustomFieldDefinition, CustomFieldValue, Discovered,
+    FieldBundle, FieldType, Issue, IssueLinkType, ProjectCustomField, ProjectRef, ProjectSchema,
+    SavedQuery, User, UserRef, YouTrackDiscovery,
+};
 
 const USER_FIELDS: &str = "id,login,fullName,guest";
 const ISSUE_FIELDS: &str = "id,idReadable,summary,resolved";
+const USER_REF_FIELDS: &str = "id,login,fullName";
+const PROJECT_FIELDS: &str = "id,shortName,name,archived";
+const PROJECT_SCHEMA_FIELDS: &str = "id,shortName,name,archived,customFields(id,$type,canBeEmpty,isPublic,ordinal,field(id,name,localizedName,aliases,fieldType(id,isMultiValue,valueType)),bundle(id,$type,values(id,name,localizedName,login,fullName,archived,ordinal,isResolved,$type)))";
+const LINK_TYPE_FIELDS: &str =
+    "id,name,sourceToTarget,targetToSource,directed,aggregation,readOnly";
+const AGILE_FIELDS: &str = "id,name,owner(id,login,fullName)";
+const SAVED_QUERY_FIELDS: &str = "id,name,query,owner(id,login,fullName)";
+const BUNDLE_VALUE_FIELDS: &str =
+    "id,name,localizedName,login,fullName,archived,ordinal,isResolved,$type";
+// YouTrack caps most collection resources at 42 entries per page.
+const PAGE_SIZE: usize = 42;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -75,13 +90,7 @@ impl Client {
             .get("users/me", &[("fields", USER_FIELDS.to_owned())])
             .await?;
 
-        Ok(User {
-            id: raw.id,
-            login: raw.login,
-            full_name: raw.full_name,
-            email: raw.email,
-            guest: raw.guest,
-        })
+        Ok(raw.into())
     }
 
     pub async fn issues(&self, query: Option<&str>, top: usize) -> Result<Vec<Issue>, Error> {
@@ -96,6 +105,162 @@ impl Client {
 
         let raw: Vec<RawIssue> = self.get("issues", &params).await?;
         Ok(raw.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn discover(&self) -> Result<YouTrackDiscovery, Error> {
+        let (projects, users, issue_link_types, agile_boards, saved_queries) = tokio::join!(
+            self.discover_collection::<RawProjectRef>("admin/projects", PROJECT_FIELDS),
+            self.discover_capability("users"),
+            self.discover_collection::<RawIssueLinkType>("issueLinkTypes", LINK_TYPE_FIELDS),
+            self.discover_capability("agiles"),
+            self.discover_capability("savedQueries"),
+        );
+
+        Ok(YouTrackDiscovery {
+            projects: projects?.map(|items| items.into_iter().map(Into::into).collect()),
+            users: users?,
+            issue_link_types: issue_link_types?
+                .map(|items| items.into_iter().map(Into::into).collect()),
+            agile_boards: agile_boards?,
+            saved_queries: saved_queries?,
+        })
+    }
+
+    pub async fn project_schema(&self, project_id: &str) -> Result<ProjectSchema, Error> {
+        let path = format!("admin/projects/{project_id}");
+        let raw: RawProjectSchema = self
+            .get(&path, &[("fields", PROJECT_SCHEMA_FIELDS.to_owned())])
+            .await?;
+        let mut schema: ProjectSchema = raw.into();
+
+        for field in &mut schema.custom_fields {
+            let Some(bundle) = field.bundle.as_mut() else {
+                continue;
+            };
+
+            if bundle.values.len() != PAGE_SIZE {
+                continue;
+            }
+
+            let path = format!(
+                "admin/projects/{project_id}/customFields/{}/bundle/values",
+                field.id
+            );
+            let values: Vec<Value> = self.get_all(&path, BUNDLE_VALUE_FIELDS).await?;
+            bundle.values = values.into_iter().filter_map(bundle_value).collect();
+        }
+
+        Ok(schema)
+    }
+
+    pub async fn users(&self, skip: usize, top: usize) -> Result<Vec<UserRef>, Error> {
+        let raw: Vec<RawUserRef> = self
+            .get(
+                "users",
+                &[
+                    ("fields", USER_REF_FIELDS.to_owned()),
+                    ("$skip", skip.to_string()),
+                    ("$top", top.to_string()),
+                ],
+            )
+            .await?;
+
+        Ok(raw.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn agile_boards(&self, skip: usize, top: usize) -> Result<Vec<AgileBoard>, Error> {
+        let raw: Vec<RawAgileBoard> = self
+            .get(
+                "agiles",
+                &[
+                    ("fields", AGILE_FIELDS.to_owned()),
+                    ("$skip", skip.to_string()),
+                    ("$top", top.to_string()),
+                ],
+            )
+            .await?;
+
+        Ok(raw.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn saved_queries(&self, skip: usize, top: usize) -> Result<Vec<SavedQuery>, Error> {
+        let raw: Vec<RawSavedQuery> = self
+            .get(
+                "savedQueries",
+                &[
+                    ("fields", SAVED_QUERY_FIELDS.to_owned()),
+                    ("$skip", skip.to_string()),
+                    ("$top", top.to_string()),
+                ],
+            )
+            .await?;
+
+        Ok(raw.into_iter().map(Into::into).collect())
+    }
+
+    async fn discover_capability(&self, path: &str) -> Result<CapabilityState, Error> {
+        match self
+            .get::<Vec<Value>>(
+                path,
+                &[
+                    ("fields", "id".to_owned()),
+                    ("$top", "1".to_owned()),
+                    ("$skip", "0".to_owned()),
+                ],
+            )
+            .await
+        {
+            Ok(_) => Ok(CapabilityState::Available),
+            Err(error @ Error::Http { status, .. }) => match unavailable_capability(status) {
+                Some(capability) => Ok(capability),
+                None => Err(error),
+            },
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn discover_collection<T>(&self, path: &str, fields: &str) -> Result<Discovered<T>, Error>
+    where
+        T: DeserializeOwned,
+    {
+        match self.get_all(path, fields).await {
+            Ok(items) => Ok(Discovered::available(items)),
+            Err(error @ Error::Http { status, .. }) => match unavailable_capability(status) {
+                Some(capability) => Ok(Discovered::unavailable(capability)),
+                None => Err(error),
+            },
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn get_all<T>(&self, path: &str, fields: &str) -> Result<Vec<T>, Error>
+    where
+        T: DeserializeOwned,
+    {
+        let mut items = Vec::new();
+        let mut skip = 0;
+
+        loop {
+            let page: Vec<T> = self
+                .get(
+                    path,
+                    &[
+                        ("fields", fields.to_owned()),
+                        ("$top", PAGE_SIZE.to_string()),
+                        ("$skip", skip.to_string()),
+                    ],
+                )
+                .await?;
+
+            let count = page.len();
+            items.extend(page);
+
+            if count < PAGE_SIZE {
+                return Ok(items);
+            }
+
+            skip += count;
+        }
     }
 
     async fn get<T>(&self, path: &str, params: &[(&str, String)]) -> Result<T, Error>
@@ -119,6 +284,14 @@ impl Client {
         }
 
         serde_json::from_str(&body).map_err(Error::Decode)
+    }
+}
+
+fn unavailable_capability(status: StatusCode) -> Option<CapabilityState> {
+    match status {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Some(CapabilityState::Forbidden),
+        StatusCode::NOT_FOUND => Some(CapabilityState::Unsupported),
+        _ => None,
     }
 }
 
@@ -159,6 +332,279 @@ struct RawUser {
     full_name: String,
     email: Option<String>,
     guest: bool,
+}
+
+impl From<RawUser> for User {
+    fn from(user: RawUser) -> Self {
+        Self {
+            id: user.id,
+            login: user.login,
+            full_name: user.full_name,
+            email: user.email,
+            guest: user.guest,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawProjectRef {
+    id: String,
+    #[serde(rename = "shortName")]
+    short_name: String,
+    name: String,
+    archived: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawProjectSchema {
+    id: String,
+    #[serde(rename = "shortName")]
+    short_name: String,
+    name: String,
+    archived: Option<bool>,
+    #[serde(rename = "customFields", default)]
+    custom_fields: Vec<RawProjectCustomField>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawProjectCustomField {
+    id: String,
+    #[serde(rename = "$type")]
+    project_field_type: String,
+    field: RawCustomFieldDefinition,
+    #[serde(rename = "canBeEmpty")]
+    can_be_empty: bool,
+    #[serde(rename = "isPublic")]
+    is_public: bool,
+    ordinal: i64,
+    bundle: Option<RawFieldBundle>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawCustomFieldDefinition {
+    id: String,
+    name: String,
+    #[serde(rename = "localizedName")]
+    localized_name: Option<String>,
+    aliases: Option<String>,
+    #[serde(rename = "fieldType")]
+    field_type: RawFieldType,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawFieldType {
+    id: String,
+    #[serde(rename = "valueType")]
+    value_type: String,
+    #[serde(rename = "isMultiValue")]
+    is_multi_value: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawFieldBundle {
+    id: String,
+    #[serde(rename = "$type")]
+    bundle_type: String,
+    #[serde(default)]
+    values: Vec<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawIssueLinkType {
+    id: String,
+    name: String,
+    #[serde(rename = "sourceToTarget")]
+    source_to_target: String,
+    #[serde(rename = "targetToSource")]
+    target_to_source: Option<String>,
+    directed: bool,
+    aggregation: bool,
+    #[serde(rename = "readOnly")]
+    read_only: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawAgileBoard {
+    id: String,
+    name: String,
+    owner: Option<RawUserRef>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawSavedQuery {
+    id: String,
+    name: String,
+    query: Option<String>,
+    owner: Option<RawUserRef>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawUserRef {
+    id: String,
+    login: String,
+    #[serde(rename = "fullName")]
+    full_name: String,
+}
+
+impl From<RawProjectRef> for ProjectRef {
+    fn from(project: RawProjectRef) -> Self {
+        Self {
+            id: project.id,
+            short_name: project.short_name,
+            name: project.name,
+            archived: project.archived,
+        }
+    }
+}
+
+impl From<RawProjectSchema> for ProjectSchema {
+    fn from(project: RawProjectSchema) -> Self {
+        Self {
+            project: ProjectRef {
+                id: project.id,
+                short_name: project.short_name,
+                name: project.name,
+                archived: project.archived,
+            },
+            custom_fields: project.custom_fields.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<RawProjectCustomField> for ProjectCustomField {
+    fn from(field: RawProjectCustomField) -> Self {
+        Self {
+            id: field.id,
+            project_field_type: field.project_field_type,
+            field: field.field.into(),
+            can_be_empty: field.can_be_empty,
+            is_public: field.is_public,
+            ordinal: field.ordinal,
+            bundle: field.bundle.map(Into::into),
+        }
+    }
+}
+
+impl From<RawCustomFieldDefinition> for CustomFieldDefinition {
+    fn from(field: RawCustomFieldDefinition) -> Self {
+        Self {
+            id: field.id,
+            name: field.name,
+            localized_name: field.localized_name,
+            aliases: field.aliases,
+            field_type: field.field_type.into(),
+        }
+    }
+}
+
+impl From<RawFieldType> for FieldType {
+    fn from(field_type: RawFieldType) -> Self {
+        Self {
+            id: field_type.id,
+            value_type: field_type.value_type,
+            is_multi_value: field_type.is_multi_value,
+        }
+    }
+}
+
+impl From<RawFieldBundle> for FieldBundle {
+    fn from(bundle: RawFieldBundle) -> Self {
+        Self {
+            id: bundle.id,
+            bundle_type: bundle.bundle_type,
+            values: bundle.values.into_iter().filter_map(bundle_value).collect(),
+        }
+    }
+}
+
+fn bundle_value(value: Value) -> Option<BundleValue> {
+    let object = value.as_object()?;
+    let id = object.get("id")?.as_str()?.to_owned();
+    let value_type = object
+        .get("$type")
+        .and_then(Value::as_str)
+        .unwrap_or("Unknown")
+        .to_owned();
+    let localized_name = object
+        .get("localizedName")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let display_name = localized_name
+        .clone()
+        .or_else(|| {
+            object
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .or_else(|| {
+            object
+                .get("fullName")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .or_else(|| {
+            object
+                .get("login")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| id.clone());
+
+    Some(BundleValue {
+        id,
+        value_type,
+        display_name,
+        localized_name,
+        archived: object.get("archived").and_then(Value::as_bool),
+        ordinal: object.get("ordinal").and_then(Value::as_i64),
+        is_resolved: object.get("isResolved").and_then(Value::as_bool),
+    })
+}
+
+impl From<RawIssueLinkType> for IssueLinkType {
+    fn from(link_type: RawIssueLinkType) -> Self {
+        Self {
+            id: link_type.id,
+            name: link_type.name,
+            source_to_target: link_type.source_to_target,
+            target_to_source: link_type.target_to_source,
+            directed: link_type.directed,
+            aggregation: link_type.aggregation,
+            read_only: link_type.read_only,
+        }
+    }
+}
+
+impl From<RawAgileBoard> for AgileBoard {
+    fn from(board: RawAgileBoard) -> Self {
+        Self {
+            id: board.id,
+            name: board.name,
+            owner: board.owner.map(Into::into),
+        }
+    }
+}
+
+impl From<RawSavedQuery> for SavedQuery {
+    fn from(query: RawSavedQuery) -> Self {
+        Self {
+            id: query.id,
+            name: query.name,
+            query: query.query,
+            owner: query.owner.map(Into::into),
+        }
+    }
+}
+
+impl From<RawUserRef> for UserRef {
+    fn from(user: RawUserRef) -> Self {
+        Self {
+            id: user.id,
+            login: user.login,
+            full_name: user.full_name,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,8 +652,12 @@ impl From<RawIssue> for Issue {
 mod tests {
     use serde_json::json;
 
-    use super::{RawIssue, api_url, authorization_header};
-    use vela_core::Issue;
+    use super::{
+        RawIssue, RawProjectRef, RawProjectSchema, api_url, authorization_header, bundle_value,
+        unavailable_capability,
+    };
+    use reqwest::StatusCode;
+    use vela_core::{BundleValue, CapabilityState, Issue, ProjectRef, ProjectSchema};
 
     #[test]
     fn builds_cloud_api_url() {
@@ -233,6 +683,23 @@ mod tests {
                 .as_str(),
             "https://example.com/youtrack/api/"
         );
+    }
+
+    #[test]
+    fn maps_permission_and_missing_endpoints_to_capabilities() {
+        assert_eq!(
+            unavailable_capability(StatusCode::UNAUTHORIZED),
+            Some(CapabilityState::Forbidden)
+        );
+        assert_eq!(
+            unavailable_capability(StatusCode::FORBIDDEN),
+            Some(CapabilityState::Forbidden)
+        );
+        assert_eq!(
+            unavailable_capability(StatusCode::NOT_FOUND),
+            Some(CapabilityState::Unsupported)
+        );
+        assert_eq!(unavailable_capability(StatusCode::BAD_REQUEST), None);
     }
 
     #[test]
@@ -288,5 +755,196 @@ mod tests {
         assert_eq!(issue.custom_fields[0].value["name"], "In Progress");
         assert_eq!(issue.custom_fields[1].value, json!(1789776000000_i64));
         assert_eq!(issue.custom_fields[2].value["login"], "reviewer");
+    }
+
+    #[test]
+    fn accepts_project_metadata_hidden_by_permissions() {
+        let raw: RawProjectRef = serde_json::from_value(json!({
+            "id": "22-460",
+            "shortName": "CMP",
+            "name": "Compose Multiplatform"
+        }))
+        .unwrap();
+
+        let project: ProjectRef = raw.into();
+
+        assert_eq!(project.short_name, "CMP");
+        assert_eq!(project.archived, None);
+    }
+
+    #[test]
+    fn preserves_project_field_schema_and_resolved_state_semantics() {
+        let raw: RawProjectSchema = serde_json::from_value(json!({
+            "id": "0-7",
+            "shortName": "vela",
+            "name": "Vela",
+            "archived": false,
+            "customFields": [
+                {
+                    "id": "189-53",
+                    "$type": "StateProjectCustomField",
+                    "canBeEmpty": false,
+                    "isPublic": true,
+                    "ordinal": 1,
+                    "field": {
+                        "id": "161-13",
+                        "name": "Status",
+                        "localizedName": null,
+                        "aliases": null,
+                        "fieldType": {
+                            "id": "state[1]",
+                            "valueType": "state",
+                            "isMultiValue": false
+                        }
+                    },
+                    "bundle": {
+                        "id": "165-4",
+                        "$type": "StateBundle",
+                        "values": [
+                            {
+                                "id": "166-30",
+                                "$type": "StateBundleElement",
+                                "name": "In Progress",
+                                "localizedName": null,
+                                "archived": false,
+                                "ordinal": 4,
+                                "isResolved": false
+                            },
+                            {
+                                "id": "166-32",
+                                "$type": "StateBundleElement",
+                                "name": "Closed",
+                                "localizedName": null,
+                                "archived": false,
+                                "ordinal": 6,
+                                "isResolved": true
+                            }
+                        ]
+                    }
+                }
+            ]
+        }))
+        .unwrap();
+
+        let schema: ProjectSchema = raw.into();
+        let field = &schema.custom_fields[0];
+        let values = &field.bundle.as_ref().unwrap().values;
+
+        assert_eq!(schema.project.short_name, "vela");
+        assert_eq!(field.field.field_type.id, "state[1]");
+        assert!(!field.field.field_type.is_multi_value);
+        assert_eq!(values[0].is_resolved, Some(false));
+        assert_eq!(values[1].display_name, "Closed");
+        assert_eq!(values[1].is_resolved, Some(true));
+    }
+
+    #[test]
+    fn preserves_project_specific_enum_bundle_values() {
+        let raw: RawProjectSchema = serde_json::from_value(json!({
+            "id": "0-7",
+            "shortName": "vela",
+            "name": "Vela",
+            "archived": false,
+            "customFields": [
+                {
+                    "id": "189-54",
+                    "$type": "EnumProjectCustomField",
+                    "canBeEmpty": true,
+                    "isPublic": true,
+                    "ordinal": 2,
+                    "field": {
+                        "id": "161-27",
+                        "name": "Kind",
+                        "localizedName": null,
+                        "aliases": null,
+                        "fieldType": {
+                            "id": "enum[1]",
+                            "valueType": "enum",
+                            "isMultiValue": false
+                        }
+                    },
+                    "bundle": {
+                        "id": "163-11",
+                        "$type": "EnumBundle",
+                        "values": [
+                            {
+                                "id": "164-47",
+                                "$type": "EnumBundleElement",
+                                "name": "Feature",
+                                "localizedName": null,
+                                "archived": false,
+                                "ordinal": 1
+                            },
+                            {
+                                "id": "164-48",
+                                "$type": "EnumBundleElement",
+                                "name": "Bug",
+                                "localizedName": null,
+                                "archived": false,
+                                "ordinal": 2
+                            },
+                            {
+                                "id": "164-49",
+                                "$type": "EnumBundleElement",
+                                "name": "Task",
+                                "localizedName": null,
+                                "archived": false,
+                                "ordinal": 3
+                            }
+                        ]
+                    }
+                }
+            ]
+        }))
+        .unwrap();
+
+        let schema: ProjectSchema = raw.into();
+        let field = &schema.custom_fields[0];
+        let values = &field.bundle.as_ref().unwrap().values;
+
+        assert_eq!(field.field.name, "Kind");
+        assert_eq!(field.field.field_type.id, "enum[1]");
+        assert_eq!(field.field.field_type.value_type, "enum");
+        assert_eq!(
+            values
+                .iter()
+                .map(|value| value.display_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Feature", "Bug", "Task"]
+        );
+        assert!(values.iter().all(|value| value.is_resolved.is_none()));
+    }
+
+    #[test]
+    fn normalizes_bundle_value_display_names_without_assuming_value_kind() {
+        let localized = bundle_value(json!({
+            "id": "164-47",
+            "$type": "EnumBundleElement",
+            "name": "Feature",
+            "localizedName": "Function"
+        }))
+        .unwrap();
+        let user = bundle_value(json!({
+            "id": "1-7",
+            "$type": "User",
+            "login": "ada",
+            "fullName": "Ada Lovelace"
+        }))
+        .unwrap();
+
+        assert_eq!(
+            localized,
+            BundleValue {
+                id: "164-47".to_owned(),
+                value_type: "EnumBundleElement".to_owned(),
+                display_name: "Function".to_owned(),
+                localized_name: Some("Function".to_owned()),
+                archived: None,
+                ordinal: None,
+                is_resolved: None,
+            }
+        );
+        assert_eq!(user.display_name, "Ada Lovelace");
+        assert_eq!(user.value_type, "User");
     }
 }
