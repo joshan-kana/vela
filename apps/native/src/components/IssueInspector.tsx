@@ -121,7 +121,7 @@ export default function IssueInspector({
     return () => {
       active = false;
     };
-  }, [connection.account_id, connection.service_url, issueId]);
+  }, [connection, issueId]);
 
   const fields = useMemo(() => {
     if (!details) {

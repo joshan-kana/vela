@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Linking,
   Pressable,
   StatusBar,
   StyleSheet,
@@ -13,6 +14,8 @@ import {
 
 import IssueInspector from './src/components/IssueInspector';
 import {
+  beginOAuth,
+  completeOAuth,
   deleteAccount,
   listAccounts,
   savePermanentTokenAccount,
@@ -27,6 +30,7 @@ import {
 } from './src/native/VelaRust';
 
 const ISSUE_ROW_HEIGHT = 42;
+const OAUTH_CALLBACK_PREFIX = 'io.github.joshankana.vela:/oauth/callback';
 
 function App() {
   const dark = useColorScheme() === 'dark';
@@ -35,6 +39,10 @@ function App() {
   const tokenInputRef = useRef<TextInput>(null);
   const tokenValueRef = useRef('');
   const [serviceUrl, setServiceUrl] = useState('');
+  const [oauthClientId, setOAuthClientId] = useState('');
+  const [oauthHubUrl, setOAuthHubUrl] = useState('');
+  const [oauthScope, setOAuthScope] = useState('');
+  const handledOAuthCallbackRef = useRef<string | null>(null);
   const [accounts, setAccounts] = useState<StoredAccount[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(true);
   const [work, setWork] = useState<MyWork | null>(null);
@@ -65,6 +73,55 @@ function App() {
 
     return () => {
       active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    async function finishOAuthCallback(callbackUrl: string) {
+      setConnecting(true);
+      setError(null);
+
+      try {
+        const account = await completeOAuth(callbackUrl);
+        const connection: Connection = {
+          service_url: account.service_url,
+          account_id: account.id,
+        };
+        const loadedWork = await withConnection(connection, loadMyWork);
+
+        setAccounts(current =>
+          [...current.filter(item => item.id !== account.id), account].sort(
+            (left, right) => left.service_url.localeCompare(right.service_url),
+          ),
+        );
+        setServiceUrl(account.service_url);
+        setWork(loadedWork);
+        setSession(connection);
+      } catch (oauthError) {
+        setError(message(oauthError, 'Unable to complete OAuth'));
+      } finally {
+        setConnecting(false);
+      }
+    }
+
+    function handleUrl(url: string | null) {
+      if (
+        url?.startsWith(OAUTH_CALLBACK_PREFIX) &&
+        handledOAuthCallbackRef.current !== url
+      ) {
+        handledOAuthCallbackRef.current = url;
+        finishOAuthCallback(url);
+      }
+    }
+
+    const subscription = Linking.addEventListener('url', event => {
+      handleUrl(event.url);
+    });
+
+    Linking.getInitialURL().then(handleUrl);
+
+    return () => {
+      subscription.remove();
     };
   }, []);
 
@@ -103,24 +160,54 @@ function App() {
     }
   }
 
-  async function connectStored(account: StoredAccount) {
-    if (connecting) {
+  async function connectOAuth() {
+    const trimmedUrl = serviceUrl.trim();
+    const trimmedClientId = oauthClientId.trim();
+
+    if (!trimmedUrl || !trimmedClientId || connecting) {
       return;
     }
-
-    const connection: Connection = {
-      service_url: account.service_url,
-      account_id: account.id,
-    };
 
     setConnecting(true);
     setError(null);
 
     try {
-      const loadedWork = await withConnection(connection, loadMyWork);
-      setServiceUrl(account.service_url);
-      setWork(loadedWork);
-      setSession(connection);
+      const start = await beginOAuth(
+        trimmedUrl,
+        trimmedClientId,
+        oauthHubUrl.trim() || null,
+        oauthScope.trim() || null,
+      );
+      await Linking.openURL(start.authorization_url);
+    } catch (oauthError) {
+      setError(message(oauthError, 'Unable to start OAuth'));
+    } finally {
+      setConnecting(false);
+    }
+  }
+
+  async function activateStoredAccount(account: StoredAccount) {
+    const connection: Connection = {
+      service_url: account.service_url,
+      account_id: account.id,
+    };
+    const loadedWork = await withConnection(connection, loadMyWork);
+
+    setServiceUrl(account.service_url);
+    setWork(loadedWork);
+    setSession(connection);
+  }
+
+  async function connectStored(account: StoredAccount) {
+    if (connecting) {
+      return;
+    }
+
+    setConnecting(true);
+    setError(null);
+
+    try {
+      await activateStoredAccount(account);
     } catch (connectionError) {
       setWork(null);
       setError(message(connectionError, 'Unable to connect to YouTrack'));
@@ -315,8 +402,8 @@ function App() {
                     { color: palette.secondaryText },
                   ]}
                 >
-                  Enter your YouTrack address and, if required, a permanent
-                  token.
+                  Use OAuth for a preregistered public client, or connect with a
+                  permanent token or guest access.
                 </Text>
 
                 <View style={styles.form}>
@@ -344,7 +431,9 @@ function App() {
                             accessibilityLabel={`Connect ${account.service_url}`}
                             accessibilityRole="button"
                             disabled={connecting}
-                            onPress={() => void connectStored(account)}
+                            onPress={() => {
+                              connectStored(account);
+                            }}
                             style={({ pressed }) => [
                               styles.savedAccountButton,
                               pressed && styles.buttonPressed,
@@ -361,7 +450,9 @@ function App() {
                             accessibilityLabel={`Forget ${account.service_url}`}
                             accessibilityRole="button"
                             disabled={connecting}
-                            onPress={() => void forgetAccount(account)}
+                            onPress={() => {
+                              forgetAccount(account);
+                            }}
                             style={({ pressed }) => [
                               styles.forgetButton,
                               pressed && styles.buttonPressed,
@@ -394,6 +485,84 @@ function App() {
                     value={serviceUrl}
                   />
                   <TextInput
+                    accessibilityLabel="OAuth client ID"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    onChangeText={setOAuthClientId}
+                    placeholder="OAuth client ID"
+                    placeholderTextColor={palette.secondaryText}
+                    style={[
+                      styles.input,
+                      {
+                        borderColor: palette.separator,
+                        color: palette.text,
+                      },
+                    ]}
+                    value={oauthClientId}
+                  />
+                  <TextInput
+                    accessibilityLabel="Hub address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    onChangeText={setOAuthHubUrl}
+                    placeholder="Hub address override (optional)"
+                    placeholderTextColor={palette.secondaryText}
+                    style={[
+                      styles.input,
+                      {
+                        borderColor: palette.separator,
+                        color: palette.text,
+                      },
+                    ]}
+                    value={oauthHubUrl}
+                  />
+                  <TextInput
+                    accessibilityLabel="OAuth scope"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    onChangeText={setOAuthScope}
+                    placeholder="OAuth scope override (optional)"
+                    placeholderTextColor={palette.secondaryText}
+                    style={[
+                      styles.input,
+                      {
+                        borderColor: palette.separator,
+                        color: palette.text,
+                      },
+                    ]}
+                    value={oauthScope}
+                  />
+                  <Pressable
+                    accessibilityLabel="Connect with OAuth"
+                    accessibilityRole="button"
+                    disabled={
+                      !serviceUrl.trim() || !oauthClientId.trim() || connecting
+                    }
+                    onPress={() => {
+                      connectOAuth();
+                    }}
+                    style={({ pressed }) => [
+                      styles.button,
+                      { backgroundColor: palette.accent },
+                      (!serviceUrl.trim() ||
+                        !oauthClientId.trim() ||
+                        connecting) &&
+                        styles.buttonDisabled,
+                      pressed && styles.buttonPressed,
+                    ]}
+                  >
+                    <Text style={styles.buttonText}>Connect with OAuth</Text>
+                  </Pressable>
+
+                  <Text
+                    style={[
+                      styles.authDivider,
+                      { color: palette.secondaryText },
+                    ]}
+                  >
+                    or
+                  </Text>
+                  <TextInput
                     ref={tokenInputRef}
                     accessibilityLabel="Permanent token"
                     autoCapitalize="none"
@@ -417,6 +586,7 @@ function App() {
                   {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
                   <Pressable
+                    accessibilityLabel="Connect with token or guest access"
                     accessibilityRole="button"
                     disabled={!serviceUrl.trim() || connecting}
                     onPress={connect}
@@ -431,7 +601,9 @@ function App() {
                     {connecting ? (
                       <ActivityIndicator color="#ffffff" size="small" />
                     ) : (
-                      <Text style={styles.buttonText}>Connect</Text>
+                      <Text style={styles.buttonText}>
+                        Connect with token or guest access
+                      </Text>
                     )}
                   </Pressable>
                 </View>
@@ -596,6 +768,10 @@ const styles = StyleSheet.create({
   forgetButton: {
     paddingHorizontal: 10,
     paddingVertical: 9,
+  },
+  authDivider: {
+    fontSize: 12,
+    textAlign: 'center',
   },
   input: {
     borderRadius: 7,

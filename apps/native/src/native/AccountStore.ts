@@ -3,7 +3,12 @@ import { NativeModules } from 'react-native';
 export type StoredAccount = {
   id: string;
   service_url: string;
-  auth_kind: 'permanent_token';
+  auth_kind: 'permanent_token' | 'oauth_pkce';
+};
+
+export type OAuthStart = {
+  authorization_url: string;
+  state: string;
 };
 
 export type Connection = {
@@ -19,6 +24,13 @@ type NativeAccountStore = {
   ): Promise<StoredAccount>;
   deleteAccount?(accountId: string): Promise<void>;
   loadAccountToken?(accountId: string): Promise<string>;
+  beginOAuth?(
+    serviceUrl: string,
+    clientId: string,
+    hubUrl: string | null,
+    scope: string | null,
+  ): Promise<OAuthStart>;
+  completeOAuth?(callbackUrl: string): Promise<StoredAccount>;
 };
 
 function module(): NativeAccountStore {
@@ -52,6 +64,45 @@ export async function savePermanentTokenAccount(
   }
 
   return store.savePermanentTokenAccount(serviceUrl.trim(), token);
+}
+
+export async function beginOAuth(
+  serviceUrl: string,
+  clientId: string,
+  hubUrl: string | null,
+  scope: string | null = null,
+): Promise<OAuthStart> {
+  const trimmedServiceUrl = serviceUrl.trim();
+  const trimmedClientId = clientId.trim();
+
+  if (!trimmedServiceUrl) {
+    throw new Error('YouTrack address is required');
+  }
+  if (!trimmedClientId) {
+    throw new Error('OAuth client ID is required');
+  }
+
+  const store = module();
+  if (!store.beginOAuth) {
+    throw new Error('Vela account store cannot start OAuth');
+  }
+
+  return store.beginOAuth(
+    trimmedServiceUrl,
+    trimmedClientId,
+    hubUrl?.trim() || null,
+    scope?.trim() || null,
+  );
+}
+
+export async function completeOAuth(
+  callbackUrl: string,
+): Promise<StoredAccount> {
+  const store = module();
+  if (!store.completeOAuth) {
+    throw new Error('Vela account store cannot complete OAuth');
+  }
+  return store.completeOAuth(callbackUrl);
 }
 
 export async function deleteAccount(accountId: string): Promise<void> {

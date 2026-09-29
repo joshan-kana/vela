@@ -22,11 +22,13 @@ data class StoredAccount(
 class SecureAccountStore(
   context: Context,
 ) {
-  private val preferences =
-    context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+  private val accounts =
+    context.getSharedPreferences(ACCOUNTS_PREFERENCES_NAME, Context.MODE_PRIVATE)
+  private val pendingOAuth =
+    context.getSharedPreferences(PENDING_PREFERENCES_NAME, Context.MODE_PRIVATE)
 
   fun accounts(): List<StoredAccount> =
-    entries()
+    accountEntries()
       .map { (id, secret) ->
         StoredAccount(
           id = id,
@@ -40,43 +42,114 @@ class SecureAccountStore(
     bearerToken: String,
   ): StoredAccount {
     val normalizedUrl = serviceUrl.trim()
-    val existing =
-      entries().firstOrNull { (_, secret) ->
-        secret.optString("service_url") == normalizedUrl
-      }
-    val id = existing?.first ?: UUID.randomUUID().toString().lowercase()
+    val id = existingAccountId(normalizedUrl) ?: UUID.randomUUID().toString().lowercase()
     val secret =
       JSONObject()
         .put("service_url", normalizedUrl)
         .put("bearer_token", bearerToken)
         .put("auth_kind", PERMANENT_TOKEN)
 
-    preferences.edit().putString(id, encrypt(secret.toString())).apply()
-
+    saveAccountSecret(id, secret)
     return StoredAccount(id, normalizedUrl, PERMANENT_TOKEN)
   }
 
-  fun bearerToken(accountId: String): String {
-    val encoded =
-      preferences.getString(accountId, null)
-        ?: error("Stored YouTrack account was not found")
-    val secret = JSONObject(decrypt(encoded))
-    check(secret.getString("auth_kind") == PERMANENT_TOKEN) {
-      "Stored YouTrack authentication method is unsupported"
+  fun saveOAuthAccount(
+    serviceUrl: String,
+    hubUrl: String,
+    clientId: String,
+    scope: String,
+    accessToken: String,
+    refreshToken: String?,
+    expiresInSeconds: Long?,
+  ): StoredAccount {
+    val normalizedUrl = serviceUrl.trim()
+    val id = existingAccountId(normalizedUrl) ?: UUID.randomUUID().toString().lowercase()
+    val secret =
+      JSONObject()
+        .put("service_url", normalizedUrl)
+        .put("hub_url", hubUrl)
+        .put("client_id", clientId)
+        .put("scope", scope)
+        .put("access_token", accessToken)
+        .put("auth_kind", OAUTH_PKCE)
+        .put(
+          "expires_at_ms",
+          expiresInSeconds?.let { System.currentTimeMillis() + (it * 1000) },
+        )
+
+    if (refreshToken != null) {
+      secret.put("refresh_token", refreshToken)
     }
 
-    return secret.getString("bearer_token")
+    saveAccountSecret(id, secret)
+    return StoredAccount(id, normalizedUrl, OAUTH_PKCE)
+  }
+
+  fun accountSecret(accountId: String): JSONObject {
+    val encoded =
+      accounts.getString(accountId, null)
+        ?: error("Stored YouTrack account was not found")
+    return JSONObject(decrypt(encoded))
+  }
+
+  fun updateOAuthTokens(
+    accountId: String,
+    accessToken: String,
+    refreshToken: String?,
+    expiresInSeconds: Long?,
+  ) {
+    val secret = accountSecret(accountId)
+    check(secret.getString("auth_kind") == OAUTH_PKCE) {
+      "Stored YouTrack authentication method is not OAuth"
+    }
+
+    secret.put("access_token", accessToken)
+    if (refreshToken != null) {
+      secret.put("refresh_token", refreshToken)
+    }
+    secret.put(
+      "expires_at_ms",
+      expiresInSeconds?.let { System.currentTimeMillis() + (it * 1000) },
+    )
+    saveAccountSecret(accountId, secret)
   }
 
   fun delete(accountId: String) {
-    preferences.edit().remove(accountId).apply()
+    accounts.edit().remove(accountId).apply()
   }
 
-  private fun entries(): List<Pair<String, JSONObject>> =
-    preferences.all.mapNotNull { (id, value) ->
+  fun savePendingOAuth(state: String, pending: JSONObject) {
+    pendingOAuth.edit().putString(state, encrypt(pending.toString())).apply()
+  }
+
+  fun pendingOAuth(state: String): JSONObject {
+    val encoded =
+      pendingOAuth.getString(state, null)
+        ?: error("OAuth authorization request is no longer available")
+    return JSONObject(decrypt(encoded))
+  }
+
+  fun deletePendingOAuth(state: String) {
+    pendingOAuth.edit().remove(state).apply()
+  }
+
+  private fun existingAccountId(serviceUrl: String): String? =
+    accountEntries().firstOrNull { (_, secret) ->
+      secret.optString("service_url") == serviceUrl
+    }?.first
+
+  private fun accountEntries(): List<Pair<String, JSONObject>> =
+    accounts.all.mapNotNull { (id, value) ->
       val encoded = value as? String ?: return@mapNotNull null
       id to JSONObject(decrypt(encoded))
     }
+
+  private fun saveAccountSecret(
+    accountId: String,
+    secret: JSONObject,
+  ) {
+    accounts.edit().putString(accountId, encrypt(secret.toString())).apply()
+  }
 
   private fun encrypt(plaintext: String): String {
     val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -125,11 +198,14 @@ class SecureAccountStore(
   }
 
   companion object {
-    private const val PREFERENCES_NAME = "vela_secure_accounts"
+    const val PERMANENT_TOKEN = "permanent_token"
+    const val OAUTH_PKCE = "oauth_pkce"
+
+    private const val ACCOUNTS_PREFERENCES_NAME = "vela_secure_accounts"
+    private const val PENDING_PREFERENCES_NAME = "vela_secure_oauth_pending"
     private const val KEY_ALIAS = "vela-youtrack-account-key-v1"
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
     private const val GCM_TAG_BITS = 128
-    private const val PERMANENT_TOKEN = "permanent_token"
   }
 }
