@@ -3,7 +3,10 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::LazyLock;
 
 use serde::Serialize;
-use vela_core::{AgileBoard, Issue, ProjectSchema, SavedQuery, User, UserRef, YouTrackDiscovery};
+use vela_core::{
+    AgileBoard, CustomFieldValue, Issue, IssueDetails, IssueLink, ProjectSchema, SavedQuery, User,
+    UserRef, YouTrackDiscovery,
+};
 use vela_youtrack::Client;
 
 #[derive(Serialize)]
@@ -106,6 +109,133 @@ pub extern "C" fn vela_saved_queries_json(
     })
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_issue_details_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+    issue_id: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+        let issue_id = read_required_string(issue_id, "issue ID")?;
+
+        load_issue_details(&service_url, bearer_token.as_deref(), &issue_id)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_issue_links_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+    issue_id: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+        let issue_id = read_required_string(issue_id, "issue ID")?;
+
+        load_issue_links(&service_url, bearer_token.as_deref(), &issue_id)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_set_issue_summary_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+    issue_id: *const c_char,
+    summary: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+        let issue_id = read_required_string(issue_id, "issue ID")?;
+        let summary = read_required_string(summary, "summary")?;
+
+        set_issue_summary(&service_url, bearer_token.as_deref(), &issue_id, &summary)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_set_issue_description_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+    issue_id: *const c_char,
+    description: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+        let issue_id = read_required_string(issue_id, "issue ID")?;
+        let description = read_optional_string(description)?;
+
+        set_issue_description(
+            &service_url,
+            bearer_token.as_deref(),
+            &issue_id,
+            description.as_deref(),
+        )
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_set_custom_field_value_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+    issue_id: *const c_char,
+    field_id: *const c_char,
+    field_type: *const c_char,
+    value_json: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+        let issue_id = read_required_string(issue_id, "issue ID")?;
+        let field_id = read_required_string(field_id, "field ID")?;
+        let field_type = read_required_string(field_type, "field type")?;
+        let value_json = read_required_string(value_json, "field value")?;
+        let value = serde_json::from_str(&value_json)
+            .map_err(|error| format!("field value must be valid JSON: {error}"))?;
+
+        set_custom_field_value(
+            &service_url,
+            bearer_token.as_deref(),
+            &issue_id,
+            &field_id,
+            &field_type,
+            value,
+        )
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_apply_custom_field_event_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+    issue_id: *const c_char,
+    field_id: *const c_char,
+    field_type: *const c_char,
+    event_id: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+        let issue_id = read_required_string(issue_id, "issue ID")?;
+        let field_id = read_required_string(field_id, "field ID")?;
+        let field_type = read_required_string(field_type, "field type")?;
+        let event_id = read_required_string(event_id, "event ID")?;
+
+        apply_custom_field_event(
+            &service_url,
+            bearer_token.as_deref(),
+            &issue_id,
+            &field_id,
+            &field_type,
+            &event_id,
+        )
+    })
+}
+
 /// Frees a string allocated by the Vela FFI.
 ///
 /// # Safety
@@ -194,6 +324,110 @@ fn load_saved_queries(
     runtime.block_on(async {
         client
             .saved_queries(skip, top)
+            .await
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn load_issue_details(
+    service_url: &str,
+    bearer_token: Option<&str>,
+    issue_id: &str,
+) -> Result<IssueDetails, String> {
+    let client = client(service_url, bearer_token)?;
+    let runtime = runtime()?;
+
+    runtime.block_on(async {
+        client
+            .issue_details(issue_id)
+            .await
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn load_issue_links(
+    service_url: &str,
+    bearer_token: Option<&str>,
+    issue_id: &str,
+) -> Result<Vec<IssueLink>, String> {
+    let client = client(service_url, bearer_token)?;
+    let runtime = runtime()?;
+
+    runtime.block_on(async {
+        client
+            .issue_links(issue_id)
+            .await
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn set_issue_summary(
+    service_url: &str,
+    bearer_token: Option<&str>,
+    issue_id: &str,
+    summary: &str,
+) -> Result<IssueDetails, String> {
+    let client = client(service_url, bearer_token)?;
+    let runtime = runtime()?;
+
+    runtime.block_on(async {
+        client
+            .set_summary(issue_id, summary)
+            .await
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn set_issue_description(
+    service_url: &str,
+    bearer_token: Option<&str>,
+    issue_id: &str,
+    description: Option<&str>,
+) -> Result<IssueDetails, String> {
+    let client = client(service_url, bearer_token)?;
+    let runtime = runtime()?;
+
+    runtime.block_on(async {
+        client
+            .set_description(issue_id, description)
+            .await
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn set_custom_field_value(
+    service_url: &str,
+    bearer_token: Option<&str>,
+    issue_id: &str,
+    field_id: &str,
+    field_type: &str,
+    value: serde_json::Value,
+) -> Result<CustomFieldValue, String> {
+    let client = client(service_url, bearer_token)?;
+    let runtime = runtime()?;
+
+    runtime.block_on(async {
+        client
+            .set_custom_field_value(issue_id, field_id, field_type, value)
+            .await
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn apply_custom_field_event(
+    service_url: &str,
+    bearer_token: Option<&str>,
+    issue_id: &str,
+    field_id: &str,
+    field_type: &str,
+    event_id: &str,
+) -> Result<CustomFieldValue, String> {
+    let client = client(service_url, bearer_token)?;
+    let runtime = runtime()?;
+
+    runtime.block_on(async {
+        client
+            .apply_custom_field_event(issue_id, field_id, field_type, event_id)
             .await
             .map_err(|error| error.to_string())
     })
@@ -299,8 +533,10 @@ mod android {
     };
 
     use super::{
-        bridge_response_json, discover, load_agile_boards, load_my_work, load_project_schema,
-        load_saved_queries, load_users,
+        apply_custom_field_event, bridge_response_json, discover, load_agile_boards,
+        load_issue_details, load_issue_links, load_my_work, load_project_schema,
+        load_saved_queries, load_users, set_custom_field_value, set_issue_description,
+        set_issue_summary,
     };
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::sync::LazyLock;
@@ -435,6 +671,191 @@ mod android {
 
                 let response = catch_unwind(AssertUnwindSafe(|| {
                     load_saved_queries(&service_url, Some(&bearer_token), skip, top)
+                }));
+                let json = bridge_response_json(response);
+
+                Ok(env.new_string(json)?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_issueDetailsJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        service_url: JString<'local>,
+        bearer_token: JString<'local>,
+        issue_id: JString<'local>,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let service_url = service_url.try_to_string(env)?;
+                let bearer_token = bearer_token.try_to_string(env)?;
+                let issue_id = issue_id.try_to_string(env)?;
+
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    load_issue_details(&service_url, Some(&bearer_token), &issue_id)
+                }));
+                let json = bridge_response_json(response);
+
+                Ok(env.new_string(json)?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_issueLinksJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        service_url: JString<'local>,
+        bearer_token: JString<'local>,
+        issue_id: JString<'local>,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let service_url = service_url.try_to_string(env)?;
+                let bearer_token = bearer_token.try_to_string(env)?;
+                let issue_id = issue_id.try_to_string(env)?;
+
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    load_issue_links(&service_url, Some(&bearer_token), &issue_id)
+                }));
+                let json = bridge_response_json(response);
+
+                Ok(env.new_string(json)?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_setIssueSummaryJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        service_url: JString<'local>,
+        bearer_token: JString<'local>,
+        issue_id: JString<'local>,
+        summary: JString<'local>,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let service_url = service_url.try_to_string(env)?;
+                let bearer_token = bearer_token.try_to_string(env)?;
+                let issue_id = issue_id.try_to_string(env)?;
+                let summary = summary.try_to_string(env)?;
+
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    set_issue_summary(&service_url, Some(&bearer_token), &issue_id, &summary)
+                }));
+                let json = bridge_response_json(response);
+
+                Ok(env.new_string(json)?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_setIssueDescriptionJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        service_url: JString<'local>,
+        bearer_token: JString<'local>,
+        issue_id: JString<'local>,
+        description: JString<'local>,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let service_url = service_url.try_to_string(env)?;
+                let bearer_token = bearer_token.try_to_string(env)?;
+                let issue_id = issue_id.try_to_string(env)?;
+                let description = if description.is_null() {
+                    None
+                } else {
+                    Some(description.try_to_string(env)?)
+                };
+
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    set_issue_description(
+                        &service_url,
+                        Some(&bearer_token),
+                        &issue_id,
+                        description.as_deref(),
+                    )
+                }));
+                let json = bridge_response_json(response);
+
+                Ok(env.new_string(json)?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_setCustomFieldValueJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        service_url: JString<'local>,
+        bearer_token: JString<'local>,
+        issue_id: JString<'local>,
+        field_id: JString<'local>,
+        field_type: JString<'local>,
+        value_json: JString<'local>,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let service_url = service_url.try_to_string(env)?;
+                let bearer_token = bearer_token.try_to_string(env)?;
+                let issue_id = issue_id.try_to_string(env)?;
+                let field_id = field_id.try_to_string(env)?;
+                let field_type = field_type.try_to_string(env)?;
+                let value_json = value_json.try_to_string(env)?;
+
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    let value = serde_json::from_str(&value_json)
+                        .map_err(|error| format!("field value must be valid JSON: {error}"))?;
+                    set_custom_field_value(
+                        &service_url,
+                        Some(&bearer_token),
+                        &issue_id,
+                        &field_id,
+                        &field_type,
+                        value,
+                    )
+                }));
+                let json = bridge_response_json(response);
+
+                Ok(env.new_string(json)?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_applyCustomFieldEventJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        service_url: JString<'local>,
+        bearer_token: JString<'local>,
+        issue_id: JString<'local>,
+        field_id: JString<'local>,
+        field_type: JString<'local>,
+        event_id: JString<'local>,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let service_url = service_url.try_to_string(env)?;
+                let bearer_token = bearer_token.try_to_string(env)?;
+                let issue_id = issue_id.try_to_string(env)?;
+                let field_id = field_id.try_to_string(env)?;
+                let field_type = field_type.try_to_string(env)?;
+                let event_id = event_id.try_to_string(env)?;
+
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    apply_custom_field_event(
+                        &service_url,
+                        Some(&bearer_token),
+                        &issue_id,
+                        &field_id,
+                        &field_type,
+                        &event_id,
+                    )
                 }));
                 let json = bridge_response_json(response);
 

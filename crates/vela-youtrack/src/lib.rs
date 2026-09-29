@@ -144,10 +144,19 @@ impl Client {
         &self,
         issue_id: &str,
         field_id: &str,
+        field_type: &str,
         value: Value,
     ) -> Result<CustomFieldValue, Error> {
-        self.update_custom_field(issue_id, field_id, &serde_json::json!({ "value": value }))
-            .await
+        self.update_custom_field(
+            issue_id,
+            field_id,
+            &serde_json::json!({
+                "id": field_id,
+                "$type": field_type,
+                "value": value
+            }),
+        )
+        .await
     }
 
     pub async fn apply_custom_field_event(
@@ -163,7 +172,7 @@ impl Client {
             &serde_json::json!({
                 "id": field_id,
                 "$type": field_type,
-                "event": { "id": event_id }
+                "event": { "id": event_id, "$type": "Event" }
             }),
         )
         .await
