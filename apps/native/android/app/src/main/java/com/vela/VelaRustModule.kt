@@ -24,6 +24,12 @@ class VelaRustModule(
 
   private external fun initializeRust(context: ReactApplicationContext)
 
+  private external fun executeIssueActionJsonNative(
+    serviceUrl: String,
+    bearerToken: String,
+    actionJson: String,
+  ): String
+
   private external fun beginOAuthJsonNative(
     serviceUrl: String,
     hubUrl: String,
@@ -278,6 +284,18 @@ class VelaRustModule(
       } catch (error: Throwable) {
         promise.reject("vela_oauth", error)
       }
+    }
+  }
+
+  @ReactMethod
+  fun executeIssueActionJson(
+    serviceUrl: String,
+    bearerToken: String,
+    actionJson: String,
+    promise: Promise,
+  ) {
+    resolveJson(promise) {
+      executeIssueActionJsonNative(serviceUrl, bearerToken, actionJson)
     }
   }
 

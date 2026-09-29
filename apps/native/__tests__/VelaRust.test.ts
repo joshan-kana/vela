@@ -12,11 +12,13 @@ const mockVelaRust: Record<string, jest.Mock> = {
   setIssueDescriptionJson: jest.fn(),
   setCustomFieldValueJson: jest.fn(),
   applyCustomFieldEventJson: jest.fn(),
+  executeIssueActionJson: jest.fn(),
 };
 
 import {
   applyCustomFieldEvent,
   discoverYouTrack,
+  executeIssueAction,
   loadAgileBoards,
   loadIssueDetails,
   loadIssueLinks,
@@ -27,6 +29,7 @@ import {
   setIssueDescription,
   setIssueSummary,
   type AgileBoard,
+  type IssueAction,
   type IssueDetails,
   type IssueLink,
   type ProjectSchema,
@@ -186,6 +189,7 @@ beforeEach(() => {
   delete mockVelaRust.setIssueDescription;
   delete mockVelaRust.setCustomFieldValue;
   delete mockVelaRust.applyCustomFieldEvent;
+  delete mockVelaRust.executeIssueAction;
   NativeModules.VelaRust = mockVelaRust;
 });
 
@@ -258,6 +262,50 @@ test('decodes Android JSON paginated collections', async () => {
   await expect(
     loadSavedQueries('https://example.youtrack.cloud', '', 0, 42),
   ).resolves.toEqual(savedQueries);
+});
+
+test('uses the shared direct issue action method when available', async () => {
+  const action: IssueAction = {
+    kind: 'create_issue',
+    project_id: '0-7',
+    summary: 'Create from Vela',
+    description: null,
+  };
+  const result = { kind: 'issue' as const, issue: issueDetails };
+  mockVelaRust.executeIssueAction = jest.fn().mockResolvedValue(result);
+
+  await expect(
+    executeIssueAction('https://example.youtrack.cloud', 'token', action),
+  ).resolves.toEqual(result);
+
+  expect(mockVelaRust.executeIssueActionJson).not.toHaveBeenCalled();
+});
+
+test('serializes actions through the Android JSON adapter', async () => {
+  const action: IssueAction = {
+    kind: 'set_priority',
+    issue_id: 'vela-5',
+    change: {
+      mode: 'value',
+      field_id: '123-4',
+      field_type: 'SingleEnumIssueCustomField',
+      value: { id: 'enum-1' },
+    },
+  };
+  const result = { kind: 'issue' as const, issue: issueDetails };
+  mockVelaRust.executeIssueActionJson.mockResolvedValue(
+    JSON.stringify({ status: 'ok', data: result }),
+  );
+
+  await expect(
+    executeIssueAction('https://example.youtrack.cloud', '', action),
+  ).resolves.toEqual(result);
+
+  expect(mockVelaRust.executeIssueActionJson).toHaveBeenCalledWith(
+    'https://example.youtrack.cloud',
+    '',
+    JSON.stringify(action),
+  );
 });
 
 test('uses direct issue detail and editing methods when available', async () => {

@@ -11,9 +11,9 @@ use thiserror::Error;
 use url::Url;
 use vela_core::{
     AgileBoard, BundleValue, CapabilityState, CustomFieldDefinition, CustomFieldValue, Discovered,
-    FieldBundle, FieldEvent, FieldType, Issue, IssueDetails, IssueLink, IssueLinkType, IssueRef,
-    OAuthAuthorization, OAuthTokenSet, ProjectCustomField, ProjectRef, ProjectSchema, SavedQuery,
-    User, UserRef, YouTrackDiscovery,
+    FieldBundle, FieldEvent, FieldType, Issue, IssueAction, IssueActionResult, IssueDetails,
+    IssueFieldChange, IssueLink, IssueLinkType, IssueRef, OAuthAuthorization, OAuthTokenSet,
+    ProjectCustomField, ProjectRef, ProjectSchema, SavedQuery, User, UserRef, YouTrackDiscovery,
 };
 
 const USER_FIELDS: &str = "id,login,fullName,guest";
@@ -191,6 +191,132 @@ impl Client {
             }),
         )
         .await
+    }
+
+    pub async fn execute_issue_action(
+        &self,
+        action: IssueAction,
+    ) -> Result<IssueActionResult, Error> {
+        match action {
+            IssueAction::CreateIssue {
+                project_id,
+                summary,
+                description,
+            } => {
+                let issue = self
+                    .create_issue(&project_id, &summary, description.as_deref())
+                    .await?;
+                Ok(IssueActionResult::Issue {
+                    issue: Box::new(issue),
+                })
+            }
+            IssueAction::EditSummary { issue_id, summary } => {
+                let issue = self.set_summary(&issue_id, &summary).await?;
+                Ok(IssueActionResult::Issue {
+                    issue: Box::new(issue),
+                })
+            }
+            IssueAction::SetState { issue_id, change }
+            | IssueAction::SetPriority { issue_id, change }
+            | IssueAction::SetStart { issue_id, change }
+            | IssueAction::SetDue { issue_id, change }
+            | IssueAction::AssignUser { issue_id, change } => {
+                self.apply_field_change(&issue_id, change).await?;
+                let issue = self.issue_details(&issue_id).await?;
+                Ok(IssueActionResult::Issue {
+                    issue: Box::new(issue),
+                })
+            }
+            IssueAction::MoveProject {
+                issue_id,
+                project_id,
+            } => {
+                let issue = self
+                    .update_issue(
+                        &issue_id,
+                        &serde_json::json!({ "project": { "id": project_id } }),
+                    )
+                    .await?;
+                Ok(IssueActionResult::Issue {
+                    issue: Box::new(issue),
+                })
+            }
+            IssueAction::AddTag { issue_id, tag_id } => {
+                let path = format!("issues/{issue_id}/tags");
+                self.post_action(&path, &serde_json::json!({ "id": tag_id }))
+                    .await?;
+                let issue = self.issue_details(&issue_id).await?;
+                Ok(IssueActionResult::Issue {
+                    issue: Box::new(issue),
+                })
+            }
+            IssueAction::LinkIssue {
+                issue_id,
+                link_id,
+                target_issue_id,
+            } => {
+                let path = format!("issues/{issue_id}/links/{link_id}/issues");
+                self.post_action(&path, &serde_json::json!({ "id": target_issue_id }))
+                    .await?;
+                let issue = self.issue_details(&issue_id).await?;
+                Ok(IssueActionResult::Issue {
+                    issue: Box::new(issue),
+                })
+            }
+            IssueAction::DeleteIssue { issue_id } => {
+                self.delete_action(&format!("issues/{issue_id}")).await?;
+                Ok(IssueActionResult::Deleted { issue_id })
+            }
+        }
+    }
+
+    pub async fn create_issue(
+        &self,
+        project_id: &str,
+        summary: &str,
+        description: Option<&str>,
+    ) -> Result<IssueDetails, Error> {
+        let body = serde_json::json!({
+            "project": { "id": project_id },
+            "summary": summary,
+            "description": description,
+        });
+        let raw: RawIssueDetails = self
+            .post(
+                "issues",
+                &[("fields", ISSUE_DETAIL_FIELDS.to_owned())],
+                &body,
+            )
+            .await?;
+
+        Ok(raw.into())
+    }
+
+    async fn apply_field_change(
+        &self,
+        issue_id: &str,
+        change: IssueFieldChange,
+    ) -> Result<(), Error> {
+        match change {
+            IssueFieldChange::Value {
+                field_id,
+                field_type,
+                value,
+            } => {
+                self.set_custom_field_value(issue_id, &field_id, &field_type, value)
+                    .await?;
+            }
+            IssueFieldChange::Event {
+                field_id,
+                field_type,
+                event_id,
+            } => {
+                self.apply_custom_field_event(issue_id, &field_id, &field_type, &event_id)
+                    .await?;
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn discover(&self) -> Result<YouTrackDiscovery, Error> {
@@ -393,6 +519,26 @@ impl Client {
         decode_response(response).await
     }
 
+    async fn post_action(&self, path: &str, body: &Value) -> Result<(), Error> {
+        let url = self.api_url.join(path)?;
+        let response = self
+            .http
+            .post(url)
+            .json(body)
+            .send()
+            .await
+            .map_err(Error::Request)?;
+
+        ensure_success(response).await
+    }
+
+    async fn delete_action(&self, path: &str) -> Result<(), Error> {
+        let url = self.api_url.join(path)?;
+        let response = self.http.delete(url).send().await.map_err(Error::Request)?;
+
+        ensure_success(response).await
+    }
+
     async fn get<T>(&self, path: &str, params: &[(&str, String)]) -> Result<T, Error>
     where
         T: DeserializeOwned,
@@ -408,6 +554,17 @@ impl Client {
 
         decode_response(response).await
     }
+}
+
+async fn ensure_success(response: reqwest::Response) -> Result<(), Error> {
+    let status = response.status();
+    let body = response.text().await.map_err(Error::Request)?;
+
+    if !status.is_success() {
+        return Err(Error::Http { status, body });
+    }
+
+    Ok(())
 }
 
 async fn decode_response<T>(response: reqwest::Response) -> Result<T, Error>

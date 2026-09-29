@@ -211,6 +211,31 @@ enum RustBridge {
     return try decode(result, fallbackMessage: "Unable to load saved queries.")
   }
 
+  static func executeIssueAction(
+    serviceURL: String,
+    bearerToken: String,
+    action: IssueAction
+  ) throws -> IssueActionResult {
+    let actionData = try JSONEncoder().encode(action)
+    guard let actionJSON = String(data: actionData, encoding: .utf8) else {
+      throw RustBridgeError.invalidResponse
+    }
+
+    let result: UnsafeMutablePointer<CChar>? = serviceURL.withCString { serviceURLPointer in
+      actionJSON.withCString { actionPointer in
+        if bearerToken.isEmpty {
+          vela_execute_issue_action_json(serviceURLPointer, nil, actionPointer)
+        } else {
+          bearerToken.withCString { tokenPointer in
+            vela_execute_issue_action_json(serviceURLPointer, tokenPointer, actionPointer)
+          }
+        }
+      }
+    }
+
+    return try decode(result, fallbackMessage: "Unable to execute the issue action.")
+  }
+
   static func loadIssueDetails(
     serviceURL: String,
     bearerToken: String,

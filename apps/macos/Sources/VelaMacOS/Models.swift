@@ -393,3 +393,149 @@ struct OAuthTokenSet: Codable {
     case scope
   }
 }
+
+enum IssueFieldChange: Encodable {
+  case value(fieldID: String, fieldType: String, value: JSONValue)
+  case event(fieldID: String, fieldType: String, eventID: String)
+
+  private enum CodingKeys: String, CodingKey {
+    case mode
+    case fieldID = "field_id"
+    case fieldType = "field_type"
+    case value
+    case eventID = "event_id"
+  }
+
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+
+    switch self {
+    case .value(let fieldID, let fieldType, let value):
+      try container.encode("value", forKey: .mode)
+      try container.encode(fieldID, forKey: .fieldID)
+      try container.encode(fieldType, forKey: .fieldType)
+      try container.encode(value, forKey: .value)
+    case .event(let fieldID, let fieldType, let eventID):
+      try container.encode("event", forKey: .mode)
+      try container.encode(fieldID, forKey: .fieldID)
+      try container.encode(fieldType, forKey: .fieldType)
+      try container.encode(eventID, forKey: .eventID)
+    }
+  }
+}
+
+enum IssueAction: Encodable {
+  case createIssue(projectID: String, summary: String, description: String?)
+  case editSummary(issueID: String, summary: String)
+  case setState(issueID: String, change: IssueFieldChange)
+  case setPriority(issueID: String, change: IssueFieldChange)
+  case setStart(issueID: String, change: IssueFieldChange)
+  case setDue(issueID: String, change: IssueFieldChange)
+  case assignUser(issueID: String, change: IssueFieldChange)
+  case moveProject(issueID: String, projectID: String)
+  case addTag(issueID: String, tagID: String)
+  case linkIssue(issueID: String, linkID: String, targetIssueID: String)
+  case deleteIssue(issueID: String)
+
+  private enum CodingKeys: String, CodingKey {
+    case kind
+    case projectID = "project_id"
+    case issueID = "issue_id"
+    case summary
+    case description
+    case change
+    case tagID = "tag_id"
+    case linkID = "link_id"
+    case targetIssueID = "target_issue_id"
+  }
+
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+
+    switch self {
+    case .createIssue(let projectID, let summary, let description):
+      try container.encode("create_issue", forKey: .kind)
+      try container.encode(projectID, forKey: .projectID)
+      try container.encode(summary, forKey: .summary)
+      try container.encodeIfPresent(description, forKey: .description)
+    case .editSummary(let issueID, let summary):
+      try container.encode("edit_summary", forKey: .kind)
+      try container.encode(issueID, forKey: .issueID)
+      try container.encode(summary, forKey: .summary)
+    case .setState(let issueID, let change):
+      try encodeFieldAction(
+        kind: "set_state",
+        issueID: issueID,
+        change: change,
+        into: &container
+      )
+    case .setPriority(let issueID, let change):
+      try encodeFieldAction(
+        kind: "set_priority",
+        issueID: issueID,
+        change: change,
+        into: &container
+      )
+    case .setStart(let issueID, let change):
+      try encodeFieldAction(
+        kind: "set_start",
+        issueID: issueID,
+        change: change,
+        into: &container
+      )
+    case .setDue(let issueID, let change):
+      try encodeFieldAction(
+        kind: "set_due",
+        issueID: issueID,
+        change: change,
+        into: &container
+      )
+    case .assignUser(let issueID, let change):
+      try encodeFieldAction(
+        kind: "assign_user",
+        issueID: issueID,
+        change: change,
+        into: &container
+      )
+    case .moveProject(let issueID, let projectID):
+      try container.encode("move_project", forKey: .kind)
+      try container.encode(issueID, forKey: .issueID)
+      try container.encode(projectID, forKey: .projectID)
+    case .addTag(let issueID, let tagID):
+      try container.encode("add_tag", forKey: .kind)
+      try container.encode(issueID, forKey: .issueID)
+      try container.encode(tagID, forKey: .tagID)
+    case .linkIssue(let issueID, let linkID, let targetIssueID):
+      try container.encode("link_issue", forKey: .kind)
+      try container.encode(issueID, forKey: .issueID)
+      try container.encode(linkID, forKey: .linkID)
+      try container.encode(targetIssueID, forKey: .targetIssueID)
+    case .deleteIssue(let issueID):
+      try container.encode("delete_issue", forKey: .kind)
+      try container.encode(issueID, forKey: .issueID)
+    }
+  }
+
+  private func encodeFieldAction(
+    kind: String,
+    issueID: String,
+    change: IssueFieldChange,
+    into container: inout KeyedEncodingContainer<CodingKeys>
+  ) throws {
+    try container.encode(kind, forKey: .kind)
+    try container.encode(issueID, forKey: .issueID)
+    try container.encode(change, forKey: .change)
+  }
+}
+
+struct IssueActionResult: Decodable {
+  let kind: String
+  let issue: IssueDetails?
+  let issueID: String?
+
+  private enum CodingKeys: String, CodingKey {
+    case kind
+    case issue
+    case issueID = "issue_id"
+  }
+}

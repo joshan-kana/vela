@@ -5,8 +5,8 @@ use std::sync::{LazyLock, Mutex};
 
 use serde::Serialize;
 use vela_core::{
-    AgileBoard, CustomFieldValue, Issue, IssueDetails, IssueLink, OAuthAuthorization,
-    OAuthTokenSet, ProjectSchema, SavedQuery, User, UserRef, YouTrackDiscovery,
+    AgileBoard, CustomFieldValue, Issue, IssueAction, IssueActionResult, IssueDetails, IssueLink,
+    OAuthAuthorization, OAuthTokenSet, ProjectSchema, SavedQuery, User, UserRef, YouTrackDiscovery,
 };
 use vela_youtrack::{Client, begin_oauth_authorization, exchange_oauth_code, refresh_oauth_token};
 
@@ -267,6 +267,23 @@ pub extern "C" fn vela_apply_custom_field_event_json(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn vela_execute_issue_action_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+    action_json: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+        let action_json = read_required_string(action_json, "issue action")?;
+        let action: IssueAction = serde_json::from_str(&action_json)
+            .map_err(|error| format!("issue action must be valid JSON: {error}"))?;
+
+        execute_issue_action(&service_url, bearer_token.as_deref(), action)
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn vela_begin_oauth_json(
     service_url: *const c_char,
     hub_url: *const c_char,
@@ -344,6 +361,22 @@ pub unsafe extern "C" fn vela_string_free(value: *mut c_char) {
 fn ffi_json<T: Serialize>(operation: impl FnOnce() -> Result<T, String>) -> *mut c_char {
     let response = catch_unwind(AssertUnwindSafe(operation));
     json_c_string(bridge_response_json(response))
+}
+
+fn execute_issue_action(
+    service_url: &str,
+    bearer_token: Option<&str>,
+    action: IssueAction,
+) -> Result<IssueActionResult, String> {
+    let client = client(service_url, bearer_token)?;
+    let runtime = runtime()?;
+
+    runtime.block_on(async {
+        client
+            .execute_issue_action(action)
+            .await
+            .map_err(|error| error.to_string())
+    })
 }
 
 fn begin_oauth(
@@ -720,9 +753,9 @@ mod android {
 
     use super::{
         apply_custom_field_event, begin_oauth, bridge_response_json, discover, exchange_oauth,
-        load_agile_boards, load_issue_details, load_issue_links, load_my_work, load_project_schema,
-        load_saved_queries, load_users, refresh_oauth, set_custom_field_value,
-        set_issue_description, set_issue_summary,
+        execute_issue_action, load_agile_boards, load_issue_details, load_issue_links,
+        load_my_work, load_project_schema, load_saved_queries, load_users, refresh_oauth,
+        set_custom_field_value, set_issue_description, set_issue_summary,
     };
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::sync::LazyLock;
@@ -739,6 +772,36 @@ mod android {
                 Ok(())
             })
             .resolve::<ThrowRuntimeExAndDefault>();
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_executeIssueActionJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        service_url: JString<'local>,
+        bearer_token: JString<'local>,
+        action_json: JString<'local>,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let service_url = service_url.try_to_string(env)?;
+                let bearer_token = bearer_token.try_to_string(env)?;
+                let action_json = action_json.try_to_string(env)?;
+
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    let action = serde_json::from_str(&action_json)
+                        .map_err(|error| format!("issue action must be valid JSON: {error}"))?;
+                    execute_issue_action(
+                        &service_url,
+                        (!bearer_token.is_empty()).then_some(bearer_token.as_str()),
+                        action,
+                    )
+                }));
+                let json = bridge_response_json(response);
+
+                Ok(env.new_string(json)?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
     }
 
     #[unsafe(no_mangle)]
