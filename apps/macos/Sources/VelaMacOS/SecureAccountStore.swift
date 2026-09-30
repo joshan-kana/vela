@@ -49,17 +49,18 @@ private struct PendingOAuth: Codable {
 
 enum SecureAccountStoreError: LocalizedError {
   case invalidStoredValue
-  case keychain(OSStatus)
+  case keychain(operation: String, status: OSStatus)
   case oauth(String)
 
   var errorDescription: String? {
     switch self {
     case .invalidStoredValue:
-      "Stored YouTrack credentials are invalid."
-    case .keychain(let status):
-      SecCopyErrorMessageString(status, nil) as String? ?? "Keychain error \(status)."
+      return "Stored YouTrack credentials are invalid."
+    case .keychain(let operation, let status):
+      let detail = SecCopyErrorMessageString(status, nil) as String? ?? "Keychain error"
+      return "\(operation) failed (\(status)): \(detail)"
     case .oauth(let message):
-      message
+      return message
     }
   }
 }
@@ -233,23 +234,31 @@ enum SecureAccountStore {
       kSecAttrService as String: service,
       kSecAttrAccount as String: id,
     ]
-    let attributes: [String: Any] = [
-      kSecValueData as String: data,
-      kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-    ]
 
-    let status = SecItemUpdate(match as CFDictionary, attributes as CFDictionary)
-    if status == errSecItemNotFound {
-      var add = match
-      for (key, value) in attributes {
-        add[key] = value
-      }
-      let addStatus = SecItemAdd(add as CFDictionary, nil)
-      guard addStatus == errSecSuccess else {
-        throw SecureAccountStoreError.keychain(addStatus)
-      }
-    } else if status != errSecSuccess {
-      throw SecureAccountStoreError.keychain(status)
+    var add = match
+    add[kSecValueData as String] = data
+
+    let addStatus = SecItemAdd(add as CFDictionary, nil)
+    if addStatus == errSecSuccess {
+      return
+    }
+
+    guard addStatus == errSecDuplicateItem else {
+      throw SecureAccountStoreError.keychain(
+        operation: "Saving credentials",
+        status: addStatus
+      )
+    }
+
+    let updateStatus = SecItemUpdate(
+      match as CFDictionary,
+      [kSecValueData as String: data] as CFDictionary
+    )
+    guard updateStatus == errSecSuccess else {
+      throw SecureAccountStoreError.keychain(
+        operation: "Updating credentials",
+        status: updateStatus
+      )
     }
   }
 
@@ -268,7 +277,10 @@ enum SecureAccountStore {
     var result: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &result)
     guard status == errSecSuccess, let data = result as? Data else {
-      throw SecureAccountStoreError.keychain(status)
+      throw SecureAccountStoreError.keychain(
+        operation: "Loading credentials",
+        status: status
+      )
     }
 
     return try JSONDecoder().decode(Value.self, from: data)
@@ -283,7 +295,10 @@ enum SecureAccountStore {
 
     let status = SecItemDelete(query as CFDictionary)
     guard status == errSecSuccess || status == errSecItemNotFound else {
-      throw SecureAccountStoreError.keychain(status)
+      throw SecureAccountStoreError.keychain(
+        operation: "Deleting credentials",
+        status: status
+      )
     }
   }
 
@@ -305,7 +320,10 @@ enum SecureAccountStore {
       return []
     }
     guard status == errSecSuccess else {
-      throw SecureAccountStoreError.keychain(status)
+      throw SecureAccountStoreError.keychain(
+        operation: "Listing credentials",
+        status: status
+      )
     }
 
     let rawItems: [[String: Any]]
