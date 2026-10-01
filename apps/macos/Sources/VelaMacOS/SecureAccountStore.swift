@@ -310,7 +310,6 @@ enum SecureAccountStore {
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
       kSecReturnAttributes as String: true,
-      kSecReturnData as String: true,
       kSecMatchLimit as String: kSecMatchLimitAll,
     ]
 
@@ -336,14 +335,12 @@ enum SecureAccountStore {
     }
 
     return try rawItems.map { item in
-      guard
-        let id = item[kSecAttrAccount as String] as? String,
-        let data = item[kSecValueData as String] as? Data
-      else {
+      guard let id = item[kSecAttrAccount as String] as? String else {
         throw SecureAccountStoreError.invalidStoredValue
       }
 
-      return (id, try JSONDecoder().decode(Value.self, from: data))
+      let value: Value = try load(service: service, id: id)
+      return (id, value)
     }
   }
 }
