@@ -47,6 +47,29 @@ private struct PendingOAuth: Codable {
   }
 }
 
+private final class AccountSecretCache: @unchecked Sendable {
+  private let lock = NSLock()
+  private var values: [String: AccountSecret] = [:]
+
+  func value(for id: String) -> AccountSecret? {
+    lock.lock()
+    defer { lock.unlock() }
+    return values[id]
+  }
+
+  func set(_ value: AccountSecret, for id: String) {
+    lock.lock()
+    values[id] = value
+    lock.unlock()
+  }
+
+  func remove(id: String) {
+    lock.lock()
+    values.removeValue(forKey: id)
+    lock.unlock()
+  }
+}
+
 enum SecureAccountStoreError: LocalizedError {
   case invalidStoredValue
   case keychain(operation: String, status: OSStatus)
@@ -72,9 +95,15 @@ enum SecureAccountStore {
   private static let accountService = "io.github.joshankana.vela.youtrack"
   private static let pendingOAuthService = "io.github.joshankana.vela.oauth.pending"
   private static let refreshSkewMilliseconds: Int64 = 60_000
+  private static let accountSecretCache = AccountSecretCache()
 
   static func accounts() throws -> [StoredAccount] {
-    try entries(service: accountService, as: AccountSecret.self).map { entry in
+    let entries = try entries(service: accountService, as: AccountSecret.self)
+    for entry in entries {
+      accountSecretCache.set(entry.value, for: entry.id)
+    }
+
+    return entries.map { entry in
       StoredAccount(
         id: entry.id,
         serviceURL: entry.value.serviceURL,
@@ -100,6 +129,7 @@ enum SecureAccountStore {
     )
 
     try save(service: accountService, id: id, value: secret)
+    accountSecretCache.set(secret, for: id)
     return StoredAccount(id: id, serviceURL: normalizedURL, authKind: permanentToken)
   }
 
@@ -123,11 +153,19 @@ enum SecureAccountStore {
     )
 
     try save(service: accountService, id: id, value: secret)
+    accountSecretCache.set(secret, for: id)
     return StoredAccount(id: id, serviceURL: normalizedURL, authKind: oauthPKCE)
   }
 
   static func bearerToken(for accountID: String) throws -> String {
-    var secret: AccountSecret = try load(service: accountService, id: accountID)
+    let cachedSecret = accountSecretCache.value(for: accountID)
+    var secret: AccountSecret
+    if let cachedSecret {
+      secret = cachedSecret
+    } else {
+      secret = try load(service: accountService, id: accountID)
+      accountSecretCache.set(secret, for: accountID)
+    }
 
     switch secret.authKind {
     case permanentToken:
@@ -173,6 +211,7 @@ enum SecureAccountStore {
           expiresAtMilliseconds: expiryMilliseconds(expiresIn: tokens.expiresIn)
         )
         try save(service: accountService, id: accountID, value: secret)
+        accountSecretCache.set(secret, for: accountID)
         return tokens.accessToken
       }
 
@@ -185,6 +224,7 @@ enum SecureAccountStore {
 
   static func delete(accountID: String) throws {
     try delete(service: accountService, id: accountID)
+    accountSecretCache.remove(id: accountID)
   }
 
   static func savePendingOAuth(
