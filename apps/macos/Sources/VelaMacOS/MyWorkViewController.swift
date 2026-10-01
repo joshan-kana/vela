@@ -152,7 +152,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     ])
 
     view = root
-    refreshSavedAccounts()
+    refreshSavedAccounts(autoConnect: true)
   }
 
   deinit {
@@ -374,6 +374,10 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
 
     connectedServiceURL = serviceURL
     connectedAccountID = accountID
+
+    if let accountID {
+      UserDefaults.standard.set(accountID, forKey: Self.lastConnectedAccountIDKey)
+    }
     issues = work.issues
     accountName.stringValue = work.user.fullName
     accountDetail.stringValue =
@@ -391,7 +395,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     errorLabel.isHidden = false
   }
 
-  private func refreshSavedAccounts() {
+  private func refreshSavedAccounts(autoConnect: Bool = false) {
     for view in savedAccountsStack.arrangedSubviews {
       savedAccountsStack.removeArrangedSubview(view)
       view.removeFromSuperview()
@@ -409,6 +413,19 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
       title.textColor = .secondaryLabelColor
       title.font = .systemFont(ofSize: 12, weight: .semibold)
       savedAccountsStack.addArrangedSubview(title)
+
+      if autoConnect, connectedServiceURL.isEmpty {
+        let lastConnectedAccountID = UserDefaults.standard.string(
+          forKey: Self.lastConnectedAccountIDKey
+        )
+        let accountToConnect =
+          accounts.first { $0.id == lastConnectedAccountID }
+          ?? (accounts.count == 1 ? accounts[0] : nil)
+
+        if let accountToConnect {
+          connectStored(account: accountToConnect)
+        }
+      }
 
       for account in accounts {
         let connect = AccountActionButton(title: account.serviceURL) { [weak self] in
@@ -470,6 +487,9 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   private func forget(account: StoredAccount) {
     do {
       try SecureAccountStore.delete(accountID: account.id)
+      if UserDefaults.standard.string(forKey: Self.lastConnectedAccountIDKey) == account.id {
+        UserDefaults.standard.removeObject(forKey: Self.lastConnectedAccountIDKey)
+      }
       refreshSavedAccounts()
     } catch {
       show(error: error)
@@ -481,6 +501,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     issues = []
     connectedServiceURL = ""
     connectedAccountID = nil
+    UserDefaults.standard.removeObject(forKey: Self.lastConnectedAccountIDKey)
     accountStack.isHidden = true
     scrollView.isHidden = true
     connectionStack.isHidden = false
@@ -599,6 +620,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
 
     return field
   }
+  private static let lastConnectedAccountIDKey = "last_connected_account_id"
   private static let defaultOAuthScope = "YouTrack"
 }
 
