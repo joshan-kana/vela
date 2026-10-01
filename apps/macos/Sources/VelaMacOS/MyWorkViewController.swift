@@ -28,6 +28,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   private var connectedServiceURL = ""
   private var connectedAccountID: String?
   private var inspector: IssueInspectorViewController?
+  private var oauthLoopbackServer: OAuthLoopbackServer?
 
   override func loadView() {
     let root = NSView()
@@ -152,16 +153,10 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
 
     view = root
     refreshSavedAccounts()
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(handleOAuthCallback(_:)),
-      name: .velaOAuthCallback,
-      object: nil
-    )
   }
 
   deinit {
-    NotificationCenter.default.removeObserver(self)
+    oauthLoopbackServer?.stop()
   }
 
   @objc private func connectOAuth() {
@@ -175,6 +170,29 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
       return
     }
 
+    oauthLoopbackServer?.stop()
+
+    let loopbackServer = OAuthLoopbackServer()
+    do {
+      try loopbackServer.start { [weak self] result in
+        guard let self else {
+          return
+        }
+
+        self.oauthLoopbackServer = nil
+        switch result {
+        case .success(let callback):
+          self.handleOAuthCallback(callback)
+        case .failure(let error):
+          self.show(error: error)
+        }
+      }
+      oauthLoopbackServer = loopbackServer
+    } catch {
+      show(error: error)
+      return
+    }
+
     setConnecting(true)
 
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -183,7 +201,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
           serviceURL: serviceURL,
           hubURL: hubURL.isEmpty ? nil : hubURL,
           clientID: clientID,
-          redirectURI: Self.oauthRedirectURI,
+          redirectURI: OAuthLoopbackServer.redirectURI,
           scope: scope.isEmpty ? Self.defaultOAuthScope : scope
         )
         try SecureAccountStore.savePendingOAuth(
@@ -201,19 +219,23 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
         }
       } catch {
         DispatchQueue.main.async {
+          self?.oauthLoopbackServer?.stop()
+          self?.oauthLoopbackServer = nil
           self?.show(error: error)
         }
       }
     }
   }
 
-  @objc private func handleOAuthCallback(_ notification: Notification) {
+  private func handleOAuthCallback(_ callback: String) {
     guard
-      let callback = notification.object as? String,
       let components = URLComponents(string: callback),
-      components.scheme == Self.oauthScheme,
-      components.path == Self.oauthCallbackPath
+      components.scheme == "http",
+      components.host == OAuthLoopbackServer.host,
+      components.port == Int(OAuthLoopbackServer.port),
+      components.path == OAuthLoopbackServer.path
     else {
+      show(error: SecureAccountStoreError.oauth("OAuth callback URL is invalid."))
       return
     }
 
@@ -577,9 +599,6 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
 
     return field
   }
-  private static let oauthScheme = "io.github.joshankana.vela"
-  private static let oauthCallbackPath = "/oauth/callback"
-  private static let oauthRedirectURI = "\(oauthScheme):\(oauthCallbackPath)"
   private static let defaultOAuthScope = "YouTrack"
 }
 

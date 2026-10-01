@@ -1,22 +1,7 @@
 import AppKit
-import Carbon.HIToolbox
-
-extension Notification.Name {
-  static let velaOAuthCallback = Notification.Name("VelaOAuthCallback")
-}
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
   private var window: NSWindow?
-  private var pendingOAuthCallback: String?
-
-  func applicationWillFinishLaunching(_ notification: Notification) {
-    NSAppleEventManager.shared().setEventHandler(
-      self,
-      andSelector: #selector(handleGetURLEvent(_:withReplyEvent:)),
-      forEventClass: AEEventClass(kInternetEventClass),
-      andEventID: AEEventID(kAEGetURL)
-    )
-  }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.mainMenu = makeMainMenu()
@@ -47,37 +32,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     self.window = window
     NSApp.activate(ignoringOtherApps: true)
 
-    if let pendingOAuthCallback {
-      NotificationCenter.default.post(
-        name: .velaOAuthCallback,
-        object: pendingOAuthCallback
-      )
-      self.pendingOAuthCallback = nil
-    }
-  }
-
-  @objc private func handleGetURLEvent(
-    _ event: NSAppleEventDescriptor,
-    withReplyEvent replyEvent: NSAppleEventDescriptor
-  ) {
-    guard
-      let callback = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue
-    else {
-      return
-    }
-
-    if window == nil {
-      pendingOAuthCallback = callback
-    } else {
-      NotificationCenter.default.post(name: .velaOAuthCallback, object: callback)
-    }
-  }
-
-  func applicationWillTerminate(_ notification: Notification) {
-    NSAppleEventManager.shared().removeEventHandler(
-      forEventClass: AEEventClass(kInternetEventClass),
-      andEventID: AEEventID(kAEGetURL)
-    )
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
