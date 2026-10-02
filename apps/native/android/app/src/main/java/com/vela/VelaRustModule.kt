@@ -52,6 +52,50 @@ class VelaRustModule(
     top: Int,
   ): String
 
+  private external fun issueDetailsJsonNative(
+    serviceUrl: String,
+    bearerToken: String,
+    issueId: String,
+  ): String
+
+  private external fun issueLinksJsonNative(
+    serviceUrl: String,
+    bearerToken: String,
+    issueId: String,
+  ): String
+
+  private external fun setIssueSummaryJsonNative(
+    serviceUrl: String,
+    bearerToken: String,
+    issueId: String,
+    summary: String,
+  ): String
+
+  private external fun setIssueDescriptionJsonNative(
+    serviceUrl: String,
+    bearerToken: String,
+    issueId: String,
+    description: String?,
+  ): String
+
+  private external fun setCustomFieldValueJsonNative(
+    serviceUrl: String,
+    bearerToken: String,
+    issueId: String,
+    fieldId: String,
+    fieldType: String,
+    valueJson: String,
+  ): String
+
+  private external fun applyCustomFieldEventJsonNative(
+    serviceUrl: String,
+    bearerToken: String,
+    issueId: String,
+    fieldId: String,
+    fieldType: String,
+    eventId: String,
+  ): String
+
   private external fun loadMyWorkJsonNative(
     serviceUrl: String,
     bearerToken: String,
@@ -117,6 +161,100 @@ class VelaRustModule(
   ) {
     resolveJson(promise) {
       savedQueriesJsonNative(serviceUrl, bearerToken, skip, top)
+    }
+  }
+
+  @ReactMethod
+  fun loadIssueDetailsJson(
+    serviceUrl: String,
+    bearerToken: String,
+    issueId: String,
+    promise: Promise,
+  ) {
+    resolveJson(promise) {
+      issueDetailsJsonNative(serviceUrl, bearerToken, issueId)
+    }
+  }
+
+  @ReactMethod
+  fun loadIssueLinksJson(
+    serviceUrl: String,
+    bearerToken: String,
+    issueId: String,
+    promise: Promise,
+  ) {
+    resolveJson(promise) {
+      issueLinksJsonNative(serviceUrl, bearerToken, issueId)
+    }
+  }
+
+  @ReactMethod
+  fun setIssueSummaryJson(
+    serviceUrl: String,
+    bearerToken: String,
+    issueId: String,
+    summary: String,
+    promise: Promise,
+  ) {
+    resolveJson(promise) {
+      setIssueSummaryJsonNative(serviceUrl, bearerToken, issueId, summary)
+    }
+  }
+
+  @ReactMethod
+  fun setIssueDescriptionJson(
+    serviceUrl: String,
+    bearerToken: String,
+    issueId: String,
+    description: String?,
+    promise: Promise,
+  ) {
+    resolveJson(promise) {
+      setIssueDescriptionJsonNative(serviceUrl, bearerToken, issueId, description)
+    }
+  }
+
+  @ReactMethod
+  fun setCustomFieldValueJson(
+    serviceUrl: String,
+    bearerToken: String,
+    issueId: String,
+    fieldId: String,
+    fieldType: String,
+    valueJson: String,
+    promise: Promise,
+  ) {
+    resolveJson(promise) {
+      setCustomFieldValueJsonNative(
+        serviceUrl,
+        bearerToken,
+        issueId,
+        fieldId,
+        fieldType,
+        valueJson,
+      )
+    }
+  }
+
+  @ReactMethod
+  fun applyCustomFieldEventJson(
+    serviceUrl: String,
+    bearerToken: String,
+    issueId: String,
+    fieldId: String,
+    fieldType: String,
+    eventId: String,
+    promise: Promise,
+  ) {
+    resolveJson(promise) {
+      applyCustomFieldEventJsonNative(
+        serviceUrl,
+        bearerToken,
+        issueId,
+        fieldId,
+        fieldType,
+        eventId,
+      )
     }
   }
 

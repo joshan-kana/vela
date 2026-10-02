@@ -116,6 +116,45 @@ export type ProjectSchema = {
   custom_fields: ProjectCustomField[];
 };
 
+export type FieldEvent = {
+  id: string;
+  presentation: string;
+};
+
+export type CustomFieldValue = {
+  id: string;
+  name: string;
+  field_type: string;
+  value: unknown;
+  possible_events: FieldEvent[];
+};
+
+export type IssueDetails = {
+  id: string;
+  id_readable: string;
+  summary: string;
+  description: string | null;
+  created_at: number;
+  updated_at: number;
+  resolved_at: number | null;
+  project: ProjectRef;
+  custom_fields: CustomFieldValue[];
+};
+
+export type IssueRef = {
+  id: string;
+  id_readable: string;
+  summary: string;
+  resolved_at: number | null;
+};
+
+export type IssueLink = {
+  id: string;
+  direction: string;
+  link_type: IssueLinkType;
+  issues: IssueRef[];
+};
+
 type BridgeResponse<T> =
   | {
       status: 'ok';
@@ -177,6 +216,82 @@ type VelaRustModule = {
     bearerToken: string,
     skip: number,
     top: number,
+  ): Promise<string>;
+  loadIssueDetails?(
+    serviceUrl: string,
+    bearerToken: string,
+    issueId: string,
+  ): Promise<IssueDetails>;
+  loadIssueDetailsJson?(
+    serviceUrl: string,
+    bearerToken: string,
+    issueId: string,
+  ): Promise<string>;
+  loadIssueLinks?(
+    serviceUrl: string,
+    bearerToken: string,
+    issueId: string,
+  ): Promise<IssueLink[]>;
+  loadIssueLinksJson?(
+    serviceUrl: string,
+    bearerToken: string,
+    issueId: string,
+  ): Promise<string>;
+  setIssueSummary?(
+    serviceUrl: string,
+    bearerToken: string,
+    issueId: string,
+    summary: string,
+  ): Promise<IssueDetails>;
+  setIssueSummaryJson?(
+    serviceUrl: string,
+    bearerToken: string,
+    issueId: string,
+    summary: string,
+  ): Promise<string>;
+  setIssueDescription?(
+    serviceUrl: string,
+    bearerToken: string,
+    issueId: string,
+    description: string | null,
+  ): Promise<IssueDetails>;
+  setIssueDescriptionJson?(
+    serviceUrl: string,
+    bearerToken: string,
+    issueId: string,
+    description: string | null,
+  ): Promise<string>;
+  setCustomFieldValue?(
+    serviceUrl: string,
+    bearerToken: string,
+    issueId: string,
+    fieldId: string,
+    fieldType: string,
+    value: unknown,
+  ): Promise<CustomFieldValue>;
+  setCustomFieldValueJson?(
+    serviceUrl: string,
+    bearerToken: string,
+    issueId: string,
+    fieldId: string,
+    fieldType: string,
+    valueJson: string,
+  ): Promise<string>;
+  applyCustomFieldEvent?(
+    serviceUrl: string,
+    bearerToken: string,
+    issueId: string,
+    fieldId: string,
+    fieldType: string,
+    eventId: string,
+  ): Promise<CustomFieldValue>;
+  applyCustomFieldEventJson?(
+    serviceUrl: string,
+    bearerToken: string,
+    issueId: string,
+    fieldId: string,
+    fieldType: string,
+    eventId: string,
   ): Promise<string>;
   loadMyWork?(
     serviceUrl: string,
@@ -349,6 +464,176 @@ export async function loadSavedQueries(
   }
 
   throw new Error('Vela Rust bridge has no supported saved queries method');
+}
+
+export async function loadIssueDetails(
+  serviceUrl: string,
+  bearerToken: string,
+  issueId: string,
+): Promise<IssueDetails> {
+  const rust = module();
+
+  if (rust.loadIssueDetails) {
+    return rust.loadIssueDetails(serviceUrl, bearerToken, issueId);
+  }
+
+  if (rust.loadIssueDetailsJson) {
+    return decodeBridgeResponse(
+      await rust.loadIssueDetailsJson(serviceUrl, bearerToken, issueId),
+    );
+  }
+
+  throw new Error('Vela Rust bridge has no supported issue details method');
+}
+
+export async function loadIssueLinks(
+  serviceUrl: string,
+  bearerToken: string,
+  issueId: string,
+): Promise<IssueLink[]> {
+  const rust = module();
+
+  if (rust.loadIssueLinks) {
+    return rust.loadIssueLinks(serviceUrl, bearerToken, issueId);
+  }
+
+  if (rust.loadIssueLinksJson) {
+    return decodeBridgeResponse(
+      await rust.loadIssueLinksJson(serviceUrl, bearerToken, issueId),
+    );
+  }
+
+  throw new Error('Vela Rust bridge has no supported issue links method');
+}
+
+export async function setIssueSummary(
+  serviceUrl: string,
+  bearerToken: string,
+  issueId: string,
+  summary: string,
+): Promise<IssueDetails> {
+  const rust = module();
+
+  if (rust.setIssueSummary) {
+    return rust.setIssueSummary(serviceUrl, bearerToken, issueId, summary);
+  }
+
+  if (rust.setIssueSummaryJson) {
+    return decodeBridgeResponse(
+      await rust.setIssueSummaryJson(serviceUrl, bearerToken, issueId, summary),
+    );
+  }
+
+  throw new Error('Vela Rust bridge has no supported summary update method');
+}
+
+export async function setIssueDescription(
+  serviceUrl: string,
+  bearerToken: string,
+  issueId: string,
+  description: string | null,
+): Promise<IssueDetails> {
+  const rust = module();
+
+  if (rust.setIssueDescription) {
+    return rust.setIssueDescription(
+      serviceUrl,
+      bearerToken,
+      issueId,
+      description,
+    );
+  }
+
+  if (rust.setIssueDescriptionJson) {
+    return decodeBridgeResponse(
+      await rust.setIssueDescriptionJson(
+        serviceUrl,
+        bearerToken,
+        issueId,
+        description,
+      ),
+    );
+  }
+
+  throw new Error(
+    'Vela Rust bridge has no supported description update method',
+  );
+}
+
+export async function setCustomFieldValue(
+  serviceUrl: string,
+  bearerToken: string,
+  issueId: string,
+  fieldId: string,
+  fieldType: string,
+  value: unknown,
+): Promise<CustomFieldValue> {
+  const rust = module();
+
+  if (rust.setCustomFieldValue) {
+    return rust.setCustomFieldValue(
+      serviceUrl,
+      bearerToken,
+      issueId,
+      fieldId,
+      fieldType,
+      value,
+    );
+  }
+
+  if (rust.setCustomFieldValueJson) {
+    return decodeBridgeResponse(
+      await rust.setCustomFieldValueJson(
+        serviceUrl,
+        bearerToken,
+        issueId,
+        fieldId,
+        fieldType,
+        JSON.stringify(value),
+      ),
+    );
+  }
+
+  throw new Error(
+    'Vela Rust bridge has no supported custom field update method',
+  );
+}
+
+export async function applyCustomFieldEvent(
+  serviceUrl: string,
+  bearerToken: string,
+  issueId: string,
+  fieldId: string,
+  fieldType: string,
+  eventId: string,
+): Promise<CustomFieldValue> {
+  const rust = module();
+
+  if (rust.applyCustomFieldEvent) {
+    return rust.applyCustomFieldEvent(
+      serviceUrl,
+      bearerToken,
+      issueId,
+      fieldId,
+      fieldType,
+      eventId,
+    );
+  }
+
+  if (rust.applyCustomFieldEventJson) {
+    return decodeBridgeResponse(
+      await rust.applyCustomFieldEventJson(
+        serviceUrl,
+        bearerToken,
+        issueId,
+        fieldId,
+        fieldType,
+        eventId,
+      ),
+    );
+  }
+
+  throw new Error('Vela Rust bridge has no supported field event method');
 }
 
 export async function loadMyWork(

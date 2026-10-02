@@ -11,7 +11,12 @@ import {
   View,
 } from 'react-native';
 
-import { loadMyWork, type MyWork } from './src/native/VelaRust';
+import IssueInspector from './src/components/IssueInspector';
+import {
+  loadMyWork,
+  type IssueDetails,
+  type MyWork,
+} from './src/native/VelaRust';
 
 const ISSUE_ROW_HEIGHT = 42;
 
@@ -22,6 +27,11 @@ function App() {
   const [serviceUrl, setServiceUrl] = useState('');
   const [token, setToken] = useState('');
   const [work, setWork] = useState<MyWork | null>(null);
+  const [session, setSession] = useState<{
+    serviceUrl: string;
+    bearerToken: string;
+  } | null>(null);
+  const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
 
@@ -37,6 +47,7 @@ function App() {
     try {
       const loadedWork = await loadMyWork(trimmedUrl, token);
       setWork(loadedWork);
+      setSession({ serviceUrl: trimmedUrl, bearerToken: token });
       setToken('');
     } catch (connectionError) {
       setWork(null);
@@ -88,136 +99,185 @@ function App() {
       </View>
 
       <View style={styles.content}>
-        <Text style={[styles.heading, { color: palette.text }]}>My Work</Text>
+        {selectedIssueId && session ? (
+          <IssueInspector
+            bearerToken={session.bearerToken}
+            issueId={selectedIssueId}
+            onBack={() => setSelectedIssueId(null)}
+            onIssueChanged={(updated: IssueDetails) => {
+              setWork(current =>
+                current
+                  ? {
+                      ...current,
+                      issues: current.issues.map(issue =>
+                        issue.id === updated.id
+                          ? {
+                              ...issue,
+                              summary: updated.summary,
+                              resolved_at: updated.resolved_at,
+                            }
+                          : issue,
+                      ),
+                    }
+                  : current,
+              );
+            }}
+            palette={palette}
+            serviceUrl={session.serviceUrl}
+          />
+        ) : (
+          <>
+            <Text style={[styles.heading, { color: palette.text }]}>
+              My Work
+            </Text>
 
-        {work ? (
-          <View style={styles.work}>
-            <View
-              style={[styles.accountBar, { borderColor: palette.separator }]}
-            >
-              <Text style={[styles.accountName, { color: palette.text }]}>
-                {work.user.full_name}
-              </Text>
-              <Text style={{ color: palette.secondaryText }}>
-                {work.user.login}
-                {work.user.guest ? ' · Guest access' : ''}
-              </Text>
-            </View>
-
-            <FlatList
-              initialNumToRender={20}
-              maxToRenderPerBatch={20}
-              windowSize={5}
-              removeClippedSubviews
-              getItemLayout={(_, index) => ({
-                length: ISSUE_ROW_HEIGHT,
-                offset: ISSUE_ROW_HEIGHT * index,
-                index,
-              })}
-              contentContainerStyle={
-                work.issues.length === 0 ? styles.emptyList : undefined
-              }
-              data={work.issues}
-              keyExtractor={issue => issue.id}
-              ListEmptyComponent={
-                <Text style={{ color: palette.secondaryText }}>
-                  No unresolved issues assigned to you.
-                </Text>
-              }
-              renderItem={({ item }) => (
+            {work ? (
+              <View style={styles.work}>
                 <View
-                  style={[styles.issueRow, { borderColor: palette.separator }]}
+                  style={[
+                    styles.accountBar,
+                    { borderColor: palette.separator },
+                  ]}
                 >
-                  <Text style={[styles.issueMarker, { color: palette.accent }]}>
-                    ○
+                  <Text style={[styles.accountName, { color: palette.text }]}>
+                    {work.user.full_name}
                   </Text>
-                  <Text
-                    style={[styles.issueId, { color: palette.secondaryText }]}
-                  >
-                    {item.id_readable}
-                  </Text>
-                  <Text
-                    numberOfLines={1}
-                    style={[styles.issueSummary, { color: palette.text }]}
-                  >
-                    {item.summary}
+                  <Text style={{ color: palette.secondaryText }}>
+                    {work.user.login}
+                    {work.user.guest ? ' · Guest access' : ''}
                   </Text>
                 </View>
-              )}
-            />
-          </View>
-        ) : (
-          <View style={styles.connectionState}>
-            <Text style={[styles.connectionTitle, { color: palette.text }]}>
-              Connect to YouTrack
-            </Text>
-            <Text
-              style={[
-                styles.connectionDescription,
-                { color: palette.secondaryText },
-              ]}
-            >
-              Enter your YouTrack address and, if required, a permanent token.
-            </Text>
 
-            <View style={styles.form}>
-              <TextInput
-                accessibilityLabel="YouTrack address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                onChangeText={setServiceUrl}
-                onSubmitEditing={connect}
-                placeholder="https://youtrack.example.com"
-                placeholderTextColor={palette.secondaryText}
-                style={[
-                  styles.input,
-                  {
-                    borderColor: palette.separator,
-                    color: palette.text,
-                  },
-                ]}
-                value={serviceUrl}
-              />
-              <TextInput
-                accessibilityLabel="Permanent token"
-                autoCapitalize="none"
-                autoCorrect={false}
-                onChangeText={setToken}
-                onSubmitEditing={connect}
-                placeholder="Permanent token (optional)"
-                placeholderTextColor={palette.secondaryText}
-                secureTextEntry
-                style={[
-                  styles.input,
-                  {
-                    borderColor: palette.separator,
-                    color: palette.text,
-                  },
-                ]}
-                value={token}
-              />
+                <FlatList
+                  initialNumToRender={20}
+                  maxToRenderPerBatch={20}
+                  windowSize={5}
+                  removeClippedSubviews
+                  getItemLayout={(_, index) => ({
+                    length: ISSUE_ROW_HEIGHT,
+                    offset: ISSUE_ROW_HEIGHT * index,
+                    index,
+                  })}
+                  contentContainerStyle={
+                    work.issues.length === 0 ? styles.emptyList : undefined
+                  }
+                  data={work.issues}
+                  keyExtractor={issue => issue.id}
+                  ListEmptyComponent={
+                    <Text style={{ color: palette.secondaryText }}>
+                      No unresolved issues assigned to you.
+                    </Text>
+                  }
+                  renderItem={({ item }) => (
+                    <Pressable
+                      accessibilityLabel={`Open ${item.id_readable}`}
+                      accessibilityRole="button"
+                      onPress={() => setSelectedIssueId(item.id)}
+                      style={({ pressed }) => [
+                        styles.issueRow,
+                        { borderColor: palette.separator },
+                        pressed && styles.buttonPressed,
+                      ]}
+                    >
+                      <Text
+                        style={[styles.issueMarker, { color: palette.accent }]}
+                      >
+                        ○
+                      </Text>
+                      <Text
+                        style={[
+                          styles.issueId,
+                          { color: palette.secondaryText },
+                        ]}
+                      >
+                        {item.id_readable}
+                      </Text>
+                      <Text
+                        numberOfLines={1}
+                        style={[styles.issueSummary, { color: palette.text }]}
+                      >
+                        {item.summary}
+                      </Text>
+                    </Pressable>
+                  )}
+                />
+              </View>
+            ) : (
+              <View style={styles.connectionState}>
+                <Text style={[styles.connectionTitle, { color: palette.text }]}>
+                  Connect to YouTrack
+                </Text>
+                <Text
+                  style={[
+                    styles.connectionDescription,
+                    { color: palette.secondaryText },
+                  ]}
+                >
+                  Enter your YouTrack address and, if required, a permanent
+                  token.
+                </Text>
 
-              {error ? <Text style={styles.errorText}>{error}</Text> : null}
+                <View style={styles.form}>
+                  <TextInput
+                    accessibilityLabel="YouTrack address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    onChangeText={setServiceUrl}
+                    onSubmitEditing={connect}
+                    placeholder="https://youtrack.example.com"
+                    placeholderTextColor={palette.secondaryText}
+                    style={[
+                      styles.input,
+                      {
+                        borderColor: palette.separator,
+                        color: palette.text,
+                      },
+                    ]}
+                    value={serviceUrl}
+                  />
+                  <TextInput
+                    accessibilityLabel="Permanent token"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    onChangeText={setToken}
+                    onSubmitEditing={connect}
+                    placeholder="Permanent token (optional)"
+                    placeholderTextColor={palette.secondaryText}
+                    secureTextEntry
+                    style={[
+                      styles.input,
+                      {
+                        borderColor: palette.separator,
+                        color: palette.text,
+                      },
+                    ]}
+                    value={token}
+                  />
 
-              <Pressable
-                accessibilityRole="button"
-                disabled={!serviceUrl.trim() || connecting}
-                onPress={connect}
-                style={({ pressed }) => [
-                  styles.button,
-                  { backgroundColor: palette.accent },
-                  (!serviceUrl.trim() || connecting) && styles.buttonDisabled,
-                  pressed && styles.buttonPressed,
-                ]}
-              >
-                {connecting ? (
-                  <ActivityIndicator color="#ffffff" size="small" />
-                ) : (
-                  <Text style={styles.buttonText}>Connect</Text>
-                )}
-              </Pressable>
-            </View>
-          </View>
+                  {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={!serviceUrl.trim() || connecting}
+                    onPress={connect}
+                    style={({ pressed }) => [
+                      styles.button,
+                      { backgroundColor: palette.accent },
+                      (!serviceUrl.trim() || connecting) &&
+                        styles.buttonDisabled,
+                      pressed && styles.buttonPressed,
+                    ]}
+                  >
+                    {connecting ? (
+                      <ActivityIndicator color="#ffffff" size="small" />
+                    ) : (
+                      <Text style={styles.buttonText}>Connect</Text>
+                    )}
+                  </Pressable>
+                </View>
+              </View>
+            )}
+          </>
         )}
       </View>
     </View>

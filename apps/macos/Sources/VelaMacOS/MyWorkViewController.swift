@@ -15,6 +15,9 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   private let scrollView = NSScrollView()
 
   private var issues: [MyWorkIssue] = []
+  private var connectedServiceURL = ""
+  private var connectedBearerToken = ""
+  private var inspector: IssueInspectorViewController?
 
   override func loadView() {
     let root = NSView()
@@ -118,7 +121,11 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
         )
 
         DispatchQueue.main.async {
-          self?.show(work)
+          self?.show(
+            work,
+            serviceURL: serviceURL,
+            bearerToken: token
+          )
         }
       } catch {
         DispatchQueue.main.async {
@@ -141,10 +148,16 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     }
   }
 
-  private func show(_ work: MyWork) {
+  private func show(
+    _ work: MyWork,
+    serviceURL: String,
+    bearerToken: String
+  ) {
     setConnecting(false)
     tokenField.stringValue = ""
 
+    connectedServiceURL = serviceURL
+    connectedBearerToken = bearerToken
     issues = work.issues
     accountName.stringValue = work.user.fullName
     accountDetail.stringValue =
@@ -160,6 +173,73 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     setConnecting(false)
     errorLabel.stringValue = error.localizedDescription
     errorLabel.isHidden = false
+  }
+
+  func tableViewSelectionDidChange(_ notification: Notification) {
+    let row = tableView.selectedRow
+    guard issues.indices.contains(row) else {
+      return
+    }
+
+    showInspector(for: issues[row])
+  }
+
+  private func showInspector(for issue: MyWorkIssue) {
+    guard inspector == nil, !connectedServiceURL.isEmpty else {
+      return
+    }
+
+    let inspector = IssueInspectorViewController(
+      serviceURL: connectedServiceURL,
+      bearerToken: connectedBearerToken,
+      issueID: issue.id,
+      preview: issue,
+      onBack: { [weak self] in
+        self?.hideInspector()
+      },
+      onIssueChanged: { [weak self] updated in
+        self?.updateIssueList(updated)
+      }
+    )
+
+    addChild(inspector)
+    inspector.view.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(inspector.view)
+
+    NSLayoutConstraint.activate([
+      inspector.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      inspector.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      inspector.view.topAnchor.constraint(equalTo: view.topAnchor),
+      inspector.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+    ])
+
+    self.inspector = inspector
+  }
+
+  private func hideInspector() {
+    guard let inspector else {
+      return
+    }
+
+    inspector.view.removeFromSuperview()
+    inspector.removeFromParent()
+    self.inspector = nil
+    tableView.deselectAll(nil)
+  }
+
+  private func updateIssueList(_ updated: IssueDetails) {
+    guard let index = issues.firstIndex(where: { $0.id == updated.id }) else {
+      return
+    }
+
+    issues[index] = MyWorkIssue(
+      id: updated.id,
+      idReadable: updated.idReadable,
+      summary: updated.summary,
+      resolvedAt: updated.resolvedAt
+    )
+    tableView.reloadData(
+      forRowIndexes: IndexSet(integer: index), columnIndexes: IndexSet(integer: 0))
   }
 
   func numberOfRows(in tableView: NSTableView) -> Int {

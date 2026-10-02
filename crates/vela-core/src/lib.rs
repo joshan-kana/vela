@@ -25,6 +25,43 @@ pub struct CustomFieldValue {
     pub name: String,
     pub field_type: String,
     pub value: Value,
+    #[serde(default)]
+    pub possible_events: Vec<FieldEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldEvent {
+    pub id: String,
+    pub presentation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IssueDetails {
+    pub id: String,
+    pub id_readable: String,
+    pub summary: String,
+    pub description: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub resolved_at: Option<i64>,
+    pub project: ProjectRef,
+    pub custom_fields: Vec<CustomFieldValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueRef {
+    pub id: String,
+    pub id_readable: String,
+    pub summary: String,
+    pub resolved_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueLink {
+    pub id: String,
+    pub direction: String,
+    pub link_type: IssueLinkType,
+    pub issues: Vec<IssueRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

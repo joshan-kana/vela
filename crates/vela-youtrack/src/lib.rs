@@ -7,13 +7,16 @@ use thiserror::Error;
 use url::Url;
 use vela_core::{
     AgileBoard, BundleValue, CapabilityState, CustomFieldDefinition, CustomFieldValue, Discovered,
-    FieldBundle, FieldType, Issue, IssueLinkType, ProjectCustomField, ProjectRef, ProjectSchema,
-    SavedQuery, User, UserRef, YouTrackDiscovery,
+    FieldBundle, FieldEvent, FieldType, Issue, IssueDetails, IssueLink, IssueLinkType, IssueRef,
+    ProjectCustomField, ProjectRef, ProjectSchema, SavedQuery, User, UserRef, YouTrackDiscovery,
 };
 
 const USER_FIELDS: &str = "id,login,fullName,guest";
 const ISSUE_FIELDS: &str = "id,idReadable,summary,resolved";
 const USER_REF_FIELDS: &str = "id,login,fullName";
+const ISSUE_DETAIL_FIELDS: &str = "id,idReadable,summary,description,created,updated,resolved,project(id,shortName,name,archived),customFields(id,name,$type,value(id,name,localizedName,login,fullName,text,presentation,isResolved,$type))";
+const ISSUE_LINK_FIELDS: &str = "id,direction,linkType(id,name,sourceToTarget,targetToSource,directed,aggregation,readOnly),issues(id,idReadable,summary,resolved)";
+const ISSUE_CUSTOM_FIELD_FIELDS: &str = "id,name,$type,value(id,name,localizedName,login,fullName,text,presentation,isResolved,$type),possibleEvents(id,presentation)";
 const PROJECT_FIELDS: &str = "id,shortName,name,archived";
 const PROJECT_SCHEMA_FIELDS: &str = "id,shortName,name,archived,customFields(id,$type,canBeEmpty,isPublic,ordinal,field(id,name,localizedName,aliases,fieldType(id,isMultiValue,valueType)),bundle(id,$type,values(id,name,localizedName,login,fullName,archived,ordinal,isResolved,$type)))";
 const LINK_TYPE_FIELDS: &str =
@@ -105,6 +108,84 @@ impl Client {
 
         let raw: Vec<RawIssue> = self.get("issues", &params).await?;
         Ok(raw.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn issue_details(&self, issue_id: &str) -> Result<IssueDetails, Error> {
+        let path = format!("issues/{issue_id}");
+        let raw: RawIssueDetails = self
+            .get(&path, &[("fields", ISSUE_DETAIL_FIELDS.to_owned())])
+            .await?;
+
+        Ok(raw.into())
+    }
+
+    pub async fn issue_links(&self, issue_id: &str) -> Result<Vec<IssueLink>, Error> {
+        let path = format!("issues/{issue_id}/links");
+        let raw: Vec<RawIssueLink> = self.get_all(&path, ISSUE_LINK_FIELDS).await?;
+
+        Ok(raw.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn issue_custom_fields(
+        &self,
+        issue_id: &str,
+    ) -> Result<Vec<CustomFieldValue>, Error> {
+        let path = format!("issues/{issue_id}/customFields");
+        let raw: Vec<RawCustomField> = self.get_all(&path, ISSUE_CUSTOM_FIELD_FIELDS).await?;
+
+        Ok(raw.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn set_summary(&self, issue_id: &str, summary: &str) -> Result<IssueDetails, Error> {
+        self.update_issue(issue_id, &serde_json::json!({ "summary": summary }))
+            .await
+    }
+
+    pub async fn set_description(
+        &self,
+        issue_id: &str,
+        description: Option<&str>,
+    ) -> Result<IssueDetails, Error> {
+        self.update_issue(issue_id, &serde_json::json!({ "description": description }))
+            .await
+    }
+
+    pub async fn set_custom_field_value(
+        &self,
+        issue_id: &str,
+        field_id: &str,
+        field_type: &str,
+        value: Value,
+    ) -> Result<CustomFieldValue, Error> {
+        self.update_custom_field(
+            issue_id,
+            field_id,
+            &serde_json::json!({
+                "id": field_id,
+                "$type": field_type,
+                "value": value
+            }),
+        )
+        .await
+    }
+
+    pub async fn apply_custom_field_event(
+        &self,
+        issue_id: &str,
+        field_id: &str,
+        field_type: &str,
+        event_id: &str,
+    ) -> Result<CustomFieldValue, Error> {
+        self.update_custom_field(
+            issue_id,
+            field_id,
+            &serde_json::json!({
+                "id": field_id,
+                "$type": field_type,
+                "event": { "id": event_id, "$type": "Event" }
+            }),
+        )
+        .await
     }
 
     pub async fn discover(&self) -> Result<YouTrackDiscovery, Error> {
@@ -263,6 +344,50 @@ impl Client {
         }
     }
 
+    async fn update_issue(&self, issue_id: &str, body: &Value) -> Result<IssueDetails, Error> {
+        let path = format!("issues/{issue_id}");
+        let raw: RawIssueDetails = self
+            .post(&path, &[("fields", ISSUE_DETAIL_FIELDS.to_owned())], body)
+            .await?;
+
+        Ok(raw.into())
+    }
+
+    async fn update_custom_field(
+        &self,
+        issue_id: &str,
+        field_id: &str,
+        body: &Value,
+    ) -> Result<CustomFieldValue, Error> {
+        let path = format!("issues/{issue_id}/customFields/{field_id}");
+        let raw: RawCustomField = self
+            .post(
+                &path,
+                &[("fields", ISSUE_CUSTOM_FIELD_FIELDS.to_owned())],
+                body,
+            )
+            .await?;
+
+        Ok(raw.into())
+    }
+
+    async fn post<T>(&self, path: &str, params: &[(&str, String)], body: &Value) -> Result<T, Error>
+    where
+        T: DeserializeOwned,
+    {
+        let url = self.api_url.join(path)?;
+        let response = self
+            .http
+            .post(url)
+            .query(params)
+            .json(body)
+            .send()
+            .await
+            .map_err(Error::Request)?;
+
+        decode_response(response).await
+    }
+
     async fn get<T>(&self, path: &str, params: &[(&str, String)]) -> Result<T, Error>
     where
         T: DeserializeOwned,
@@ -276,15 +401,22 @@ impl Client {
             .await
             .map_err(Error::Request)?;
 
-        let status = response.status();
-        let body = response.text().await.map_err(Error::Request)?;
-
-        if !status.is_success() {
-            return Err(Error::Http { status, body });
-        }
-
-        serde_json::from_str(&body).map_err(Error::Decode)
+        decode_response(response).await
     }
+}
+
+async fn decode_response<T>(response: reqwest::Response) -> Result<T, Error>
+where
+    T: DeserializeOwned,
+{
+    let status = response.status();
+    let body = response.text().await.map_err(Error::Request)?;
+
+    if !status.is_success() {
+        return Err(Error::Http { status, body });
+    }
+
+    serde_json::from_str(&body).map_err(Error::Decode)
 }
 
 fn unavailable_capability(status: StatusCode) -> Option<CapabilityState> {
@@ -608,6 +740,40 @@ impl From<RawUserRef> for UserRef {
 }
 
 #[derive(Debug, Deserialize)]
+struct RawIssueDetails {
+    id: String,
+    #[serde(rename = "idReadable")]
+    id_readable: String,
+    summary: String,
+    description: Option<String>,
+    created: i64,
+    updated: i64,
+    resolved: Option<i64>,
+    project: RawProjectRef,
+    #[serde(rename = "customFields", default)]
+    custom_fields: Vec<RawCustomField>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawIssueLink {
+    id: String,
+    direction: String,
+    #[serde(rename = "linkType")]
+    link_type: RawIssueLinkType,
+    #[serde(default)]
+    issues: Vec<RawIssueRef>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawIssueRef {
+    id: String,
+    #[serde(rename = "idReadable")]
+    id_readable: String,
+    summary: String,
+    resolved: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
 struct RawIssue {
     id: String,
     #[serde(rename = "idReadable")]
@@ -625,6 +791,33 @@ struct RawCustomField {
     #[serde(rename = "$type")]
     field_type: String,
     value: Value,
+    #[serde(rename = "possibleEvents", default)]
+    possible_events: Vec<RawFieldEvent>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawFieldEvent {
+    id: String,
+    presentation: String,
+}
+
+impl From<RawCustomField> for CustomFieldValue {
+    fn from(field: RawCustomField) -> Self {
+        Self {
+            id: field.id,
+            name: field.name,
+            field_type: field.field_type,
+            value: field.value,
+            possible_events: field
+                .possible_events
+                .into_iter()
+                .map(|event| FieldEvent {
+                    id: event.id,
+                    presentation: event.presentation,
+                })
+                .collect(),
+        }
+    }
 }
 
 impl From<RawIssue> for Issue {
@@ -634,16 +827,45 @@ impl From<RawIssue> for Issue {
             id_readable: issue.id_readable,
             summary: issue.summary,
             resolved_at: issue.resolved,
-            custom_fields: issue
-                .custom_fields
-                .into_iter()
-                .map(|field| CustomFieldValue {
-                    id: field.id,
-                    name: field.name,
-                    field_type: field.field_type,
-                    value: field.value,
-                })
-                .collect(),
+            custom_fields: issue.custom_fields.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<RawIssueDetails> for IssueDetails {
+    fn from(issue: RawIssueDetails) -> Self {
+        Self {
+            id: issue.id,
+            id_readable: issue.id_readable,
+            summary: issue.summary,
+            description: issue.description,
+            created_at: issue.created,
+            updated_at: issue.updated,
+            resolved_at: issue.resolved,
+            project: issue.project.into(),
+            custom_fields: issue.custom_fields.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<RawIssueRef> for IssueRef {
+    fn from(issue: RawIssueRef) -> Self {
+        Self {
+            id: issue.id,
+            id_readable: issue.id_readable,
+            summary: issue.summary,
+            resolved_at: issue.resolved,
+        }
+    }
+}
+
+impl From<RawIssueLink> for IssueLink {
+    fn from(link: RawIssueLink) -> Self {
+        Self {
+            id: link.id,
+            direction: link.direction,
+            link_type: link.link_type.into(),
+            issues: link.issues.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -653,11 +875,13 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        RawIssue, RawProjectRef, RawProjectSchema, api_url, authorization_header, bundle_value,
-        unavailable_capability,
+        RawIssue, RawIssueDetails, RawIssueLink, RawProjectRef, RawProjectSchema, api_url,
+        authorization_header, bundle_value, unavailable_capability,
     };
     use reqwest::StatusCode;
-    use vela_core::{BundleValue, CapabilityState, Issue, ProjectRef, ProjectSchema};
+    use vela_core::{
+        BundleValue, CapabilityState, Issue, IssueDetails, IssueLink, ProjectRef, ProjectSchema,
+    };
 
     #[test]
     fn builds_cloud_api_url() {
@@ -755,6 +979,97 @@ mod tests {
         assert_eq!(issue.custom_fields[0].value["name"], "In Progress");
         assert_eq!(issue.custom_fields[1].value, json!(1789776000000_i64));
         assert_eq!(issue.custom_fields[2].value["login"], "reviewer");
+    }
+
+    #[test]
+    fn preserves_issue_detail_primitives_and_state_machine_events() {
+        let raw: RawIssueDetails = serde_json::from_value(json!({
+            "id": "25-8579201",
+            "idReadable": "CMP-10722",
+            "summary": "Exercise inspector values",
+            "description": "Details",
+            "created": 1780000000000_i64,
+            "updated": 1780001000000_i64,
+            "resolved": null,
+            "project": {
+                "id": "22-460",
+                "shortName": "CMP",
+                "name": "Compose Multiplatform"
+            },
+            "customFields": [
+                {
+                    "id": "123-1",
+                    "name": "Due date",
+                    "$type": "DateIssueCustomField",
+                    "value": 1789776000000_i64
+                },
+                {
+                    "id": "123-2",
+                    "name": "State",
+                    "$type": "StateMachineIssueCustomField",
+                    "value": {
+                        "id": "125-1",
+                        "name": "Open",
+                        "isResolved": false,
+                        "$type": "StateBundleElement"
+                    },
+                    "possibleEvents": [
+                        {
+                            "id": "start",
+                            "presentation": "In Progress",
+                            "$type": "Event"
+                        }
+                    ]
+                }
+            ]
+        }))
+        .unwrap();
+
+        let issue: IssueDetails = raw.into();
+
+        assert_eq!(issue.id_readable, "CMP-10722");
+        assert_eq!(issue.description.as_deref(), Some("Details"));
+        assert_eq!(issue.project.archived, None);
+        assert_eq!(issue.custom_fields[0].value, json!(1789776000000_i64));
+        assert_eq!(issue.custom_fields[1].possible_events.len(), 1);
+        assert_eq!(issue.custom_fields[1].possible_events[0].id, "start");
+        assert_eq!(
+            issue.custom_fields[1].possible_events[0].presentation,
+            "In Progress"
+        );
+    }
+
+    #[test]
+    fn preserves_issue_link_direction_and_linked_issue_refs() {
+        let raw: RawIssueLink = serde_json::from_value(json!({
+            "id": "173-3t",
+            "direction": "INWARD",
+            "linkType": {
+                "id": "173-3",
+                "name": "Subtask",
+                "sourceToTarget": "parent for",
+                "targetToSource": "subtask of",
+                "directed": true,
+                "aggregation": true,
+                "readOnly": false
+            },
+            "issues": [
+                {
+                    "id": "3-603",
+                    "idReadable": "vela-1",
+                    "summary": "First usable Vela client",
+                    "resolved": null
+                }
+            ]
+        }))
+        .unwrap();
+
+        let link: IssueLink = raw.into();
+
+        assert_eq!(link.direction, "INWARD");
+        assert_eq!(link.link_type.name, "Subtask");
+        assert_eq!(link.issues.len(), 1);
+        assert_eq!(link.issues[0].id_readable, "vela-1");
     }
 
     #[test]

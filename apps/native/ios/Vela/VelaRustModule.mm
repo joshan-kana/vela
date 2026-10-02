@@ -126,6 +126,150 @@ RCT_REMAP_METHOD(loadSavedQueries,
   });
 }
 
+RCT_REMAP_METHOD(loadIssueDetails,
+                 loadIssueDetailsWithServiceUrl:(NSString *)serviceUrl
+                 bearerToken:(NSString *)bearerToken
+                 issueId:(NSString *)issueId
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    const char *serviceUrlUtf8 = serviceUrl.UTF8String;
+    const char *tokenUtf8 = bearerToken.length > 0 ? bearerToken.UTF8String : NULL;
+    char *result = vela_issue_details_json(serviceUrlUtf8, tokenUtf8, issueId.UTF8String);
+    ResolveRustResponse(result, resolve, reject);
+  });
+}
+
+RCT_REMAP_METHOD(loadIssueLinks,
+                 loadIssueLinksWithServiceUrl:(NSString *)serviceUrl
+                 bearerToken:(NSString *)bearerToken
+                 issueId:(NSString *)issueId
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    const char *serviceUrlUtf8 = serviceUrl.UTF8String;
+    const char *tokenUtf8 = bearerToken.length > 0 ? bearerToken.UTF8String : NULL;
+    char *result = vela_issue_links_json(serviceUrlUtf8, tokenUtf8, issueId.UTF8String);
+    ResolveRustResponse(result, resolve, reject);
+  });
+}
+
+RCT_REMAP_METHOD(setIssueSummary,
+                 setIssueSummaryWithServiceUrl:(NSString *)serviceUrl
+                 bearerToken:(NSString *)bearerToken
+                 issueId:(NSString *)issueId
+                 summary:(NSString *)summary
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    const char *serviceUrlUtf8 = serviceUrl.UTF8String;
+    const char *tokenUtf8 = bearerToken.length > 0 ? bearerToken.UTF8String : NULL;
+    char *result = vela_set_issue_summary_json(
+      serviceUrlUtf8,
+      tokenUtf8,
+      issueId.UTF8String,
+      summary.UTF8String
+    );
+    ResolveRustResponse(result, resolve, reject);
+  });
+}
+
+RCT_REMAP_METHOD(setIssueDescription,
+                 setIssueDescriptionWithServiceUrl:(NSString *)serviceUrl
+                 bearerToken:(NSString *)bearerToken
+                 issueId:(NSString *)issueId
+                 description:(id)description
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    const char *serviceUrlUtf8 = serviceUrl.UTF8String;
+    const char *tokenUtf8 = bearerToken.length > 0 ? bearerToken.UTF8String : NULL;
+    const char *descriptionUtf8 = NULL;
+
+    if ([description isKindOfClass:[NSString class]]) {
+      descriptionUtf8 = [(NSString *)description UTF8String];
+    }
+
+    char *result = vela_set_issue_description_json(
+      serviceUrlUtf8,
+      tokenUtf8,
+      issueId.UTF8String,
+      descriptionUtf8
+    );
+    ResolveRustResponse(result, resolve, reject);
+  });
+}
+
+RCT_REMAP_METHOD(setCustomFieldValue,
+                 setCustomFieldValueWithServiceUrl:(NSString *)serviceUrl
+                 bearerToken:(NSString *)bearerToken
+                 issueId:(NSString *)issueId
+                 fieldId:(NSString *)fieldId
+                 fieldType:(NSString *)fieldType
+                 value:(id)value
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSError *jsonError = nil;
+    NSData *valueData = [NSJSONSerialization dataWithJSONObject:value ?: [NSNull null]
+                                                        options:NSJSONWritingFragmentsAllowed
+                                                          error:&jsonError];
+    if (valueData == nil) {
+      reject(@"vela_rust", @"Unable to serialize custom field value", jsonError);
+      return;
+    }
+
+    NSString *valueJson = [[NSString alloc] initWithData:valueData
+                                                encoding:NSUTF8StringEncoding];
+    if (valueJson == nil) {
+      reject(@"vela_rust", @"Unable to encode custom field value", nil);
+      return;
+    }
+
+    const char *serviceUrlUtf8 = serviceUrl.UTF8String;
+    const char *tokenUtf8 = bearerToken.length > 0 ? bearerToken.UTF8String : NULL;
+    char *result = vela_set_custom_field_value_json(
+      serviceUrlUtf8,
+      tokenUtf8,
+      issueId.UTF8String,
+      fieldId.UTF8String,
+      fieldType.UTF8String,
+      valueJson.UTF8String
+    );
+    ResolveRustResponse(result, resolve, reject);
+  });
+}
+
+RCT_REMAP_METHOD(applyCustomFieldEvent,
+                 applyCustomFieldEventWithServiceUrl:(NSString *)serviceUrl
+                 bearerToken:(NSString *)bearerToken
+                 issueId:(NSString *)issueId
+                 fieldId:(NSString *)fieldId
+                 fieldType:(NSString *)fieldType
+                 eventId:(NSString *)eventId
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    const char *serviceUrlUtf8 = serviceUrl.UTF8String;
+    const char *tokenUtf8 = bearerToken.length > 0 ? bearerToken.UTF8String : NULL;
+    char *result = vela_apply_custom_field_event_json(
+      serviceUrlUtf8,
+      tokenUtf8,
+      issueId.UTF8String,
+      fieldId.UTF8String,
+      fieldType.UTF8String,
+      eventId.UTF8String
+    );
+    ResolveRustResponse(result, resolve, reject);
+  });
+}
+
 RCT_REMAP_METHOD(loadMyWork,
                  loadMyWorkWithServiceUrl:(NSString *)serviceUrl
                  bearerToken:(NSString *)bearerToken
