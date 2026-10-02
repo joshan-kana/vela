@@ -34,6 +34,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   private var prefetchedIssueDetails: [String: IssueDetails] = [:]
   private var prefetchedProjectSchemas: [String: ProjectSchema] = [:]
   private var prefetchGeneration = UUID()
+  private var prefetchProtectedIssueIDs: Set<String> = []
 
   override func loadView() {
     let root = NSView()
@@ -416,6 +417,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     let accountID = connectedAccountID
     let generation = UUID()
     prefetchGeneration = generation
+    prefetchProtectedIssueIDs.removeAll()
 
     DispatchQueue.global(qos: .utility).async { [weak self] in
       guard let self else {
@@ -439,7 +441,8 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
             return
           }
 
-          for issue in prefetch.issues {
+          for issue in prefetch.issues
+          where !self.prefetchProtectedIssueIDs.contains(issue.id) {
             self.prefetchedIssueDetails[issue.id] = issue
           }
           for schema in prefetch.schemas {
@@ -566,6 +569,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     connectedServiceURL = ""
     connectedAccountID = nil
     prefetchGeneration = UUID()
+    prefetchProtectedIssueIDs.removeAll()
     prefetchedIssueDetails.removeAll()
     prefetchedProjectSchemas.removeAll()
     UserDefaults.standard.removeObject(forKey: Self.lastConnectedAccountIDKey)
@@ -692,6 +696,8 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   }
 
   private func updateIssueList(_ updated: IssueDetails) {
+    prefetchProtectedIssueIDs.insert(updated.id)
+
     if updated.resolvedAt != nil {
       prefetchedIssueDetails.removeValue(forKey: updated.id)
       issues.removeAll { $0.id == updated.id }
