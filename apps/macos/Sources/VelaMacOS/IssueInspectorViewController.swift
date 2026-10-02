@@ -705,6 +705,15 @@ final class IssueInspectorViewController: NSViewController {
       $0.id == updated.id ? updated : $0
     }
 
+    var snapshotFields = fields
+    if var enrichedFields,
+      let index = enrichedFields.firstIndex(where: { $0.id == updated.id })
+    {
+      enrichedFields[index] = updated
+      self.enrichedFields = enrichedFields
+      snapshotFields = enrichedFields
+    }
+
     let next = IssueDetails(
       id: details.id,
       idReadable: details.idReadable,
@@ -714,16 +723,10 @@ final class IssueInspectorViewController: NSViewController {
       updatedAt: details.updatedAt,
       resolvedAt: details.resolvedAt,
       project: details.project,
-      customFields: fields
+      customFields: snapshotFields
     )
 
     self.details = next
-    if var enrichedFields,
-      let index = enrichedFields.firstIndex(where: { $0.id == updated.id })
-    {
-      enrichedFields[index] = updated
-      self.enrichedFields = enrichedFields
-    }
     renderFields()
     onIssueChanged(next)
   }

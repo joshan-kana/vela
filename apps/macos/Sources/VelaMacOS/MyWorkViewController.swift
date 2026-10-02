@@ -692,18 +692,24 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   }
 
   private func updateIssueList(_ updated: IssueDetails) {
-    guard let index = issues.firstIndex(where: { $0.id == updated.id }) else {
-      return
+    if updated.resolvedAt != nil {
+      prefetchedIssueDetails.removeValue(forKey: updated.id)
+      issues.removeAll { $0.id == updated.id }
+    } else {
+      prefetchedIssueDetails[updated.id] = updated
+
+      if let index = issues.firstIndex(where: { $0.id == updated.id }) {
+        issues[index] = MyWorkIssue(
+          id: updated.id,
+          idReadable: updated.idReadable,
+          summary: updated.summary,
+          resolvedAt: updated.resolvedAt
+        )
+      }
     }
 
-    issues[index] = MyWorkIssue(
-      id: updated.id,
-      idReadable: updated.idReadable,
-      summary: updated.summary,
-      resolvedAt: updated.resolvedAt
-    )
-    tableView.reloadData(
-      forRowIndexes: IndexSet(integer: index), columnIndexes: IndexSet(integer: 0))
+    tableView.reloadData()
+    tableView.deselectAll(nil)
   }
 
   func numberOfRows(in tableView: NSTableView) -> Int {
