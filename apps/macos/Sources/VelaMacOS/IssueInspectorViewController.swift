@@ -45,6 +45,8 @@ final class IssueInspectorViewController: NSViewController {
 
   override func loadView() {
     let root = NSView()
+    root.wantsLayer = true
+    root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
     let backButton = ClosureButton(title: "‹ My Work") { [weak self] in
       self?.onBack()
@@ -251,7 +253,9 @@ final class IssueInspectorViewController: NSViewController {
     }
 
     for field in sorted {
-      fieldsStack.addArrangedSubview(makeFieldRow(field))
+      let row = makeFieldRow(field)
+      fieldsStack.addArrangedSubview(row)
+      row.widthAnchor.constraint(equalTo: fieldsStack.widthAnchor).isActive = true
     }
   }
 
@@ -314,7 +318,6 @@ final class IssueInspectorViewController: NSViewController {
     row.edgeInsets = NSEdgeInsets(top: 7, left: 0, bottom: 7, right: 0)
 
     editor.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    row.widthAnchor.constraint(equalTo: fieldsStack.widthAnchor).isActive = true
 
     return row
   }
