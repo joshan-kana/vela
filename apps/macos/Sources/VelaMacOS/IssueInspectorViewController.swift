@@ -13,6 +13,7 @@ final class IssueInspectorViewController: NSViewController {
   private let idLabel = NSTextField(labelWithString: "")
   private let projectLabel = NSTextField(labelWithString: "")
   private let summaryField = NSTextField()
+  private let summarySaveButton = NSButton(title: "Save summary", target: nil, action: nil)
   private let descriptionTextView = NSTextView()
   private let descriptionSaveButton = NSButton(title: "Save description", target: nil, action: nil)
   private let fieldsStack = NSStackView()
@@ -78,9 +79,9 @@ final class IssueInspectorViewController: NSViewController {
     summaryField.font = .systemFont(ofSize: 22, weight: .semibold)
     summaryField.setAccessibilityLabel("Issue summary")
 
-    let summarySaveButton = ClosureButton(title: "Save summary") { [weak self] in
-      self?.saveSummary()
-    }
+    summarySaveButton.target = self
+    summarySaveButton.action = #selector(saveSummary)
+    summarySaveButton.bezelStyle = .rounded
 
     descriptionTextView.isRichText = false
     descriptionTextView.isAutomaticQuoteSubstitutionEnabled = false
@@ -196,7 +197,13 @@ final class IssueInspectorViewController: NSViewController {
   }
 
   private func loadIssue() {
-    setBusy(true)
+    let blocksInteraction = details == nil
+    if blocksInteraction {
+      setBusy(true)
+    } else {
+      progress.startAnimation(nil)
+    }
+
     errorLabel.isHidden = true
     enrichmentLoaded = false
 
@@ -213,10 +220,26 @@ final class IssueInspectorViewController: NSViewController {
           issueID: self.issueID
         )
         DispatchQueue.main.async {
+          let previousDetails = self.details
+          let preserveSummaryDraft =
+            previousDetails.map { self.summaryField.stringValue != $0.summary } ?? false
+          let preserveDescriptionDraft =
+            previousDetails.map {
+              self.descriptionTextView.string != ($0.description ?? "")
+            } ?? false
+
           self.details = issue
           self.links = []
-          self.render()
-          self.setBusy(false)
+          self.render(
+            preserveSummaryDraft: preserveSummaryDraft,
+            preserveDescriptionDraft: preserveDescriptionDraft
+          )
+
+          if blocksInteraction {
+            self.setBusy(false)
+          } else {
+            self.progress.stopAnimation(nil)
+          }
         }
 
         let enrichment = try RustBridge.loadIssueEnrichment(
@@ -237,7 +260,11 @@ final class IssueInspectorViewController: NSViewController {
       } catch {
         DispatchQueue.main.async {
           self.show(error: error)
-          self.setBusy(false)
+          if blocksInteraction {
+            self.setBusy(false)
+          } else {
+            self.progress.stopAnimation(nil)
+          }
         }
       }
     }
@@ -251,15 +278,23 @@ final class IssueInspectorViewController: NSViewController {
     return try SecureAccountStore.bearerToken(for: accountID)
   }
 
-  private func render() {
+  private func render(
+    preserveSummaryDraft: Bool = false,
+    preserveDescriptionDraft: Bool = false
+  ) {
     guard let details else {
       return
     }
 
     idLabel.stringValue = details.idReadable
     projectLabel.stringValue = "\(details.project.name) · \(details.project.shortName)"
-    summaryField.stringValue = details.summary
-    descriptionTextView.string = details.description ?? ""
+
+    if !preserveSummaryDraft {
+      summaryField.stringValue = details.summary
+    }
+    if !preserveDescriptionDraft {
+      descriptionTextView.string = details.description ?? ""
+    }
 
     renderFields()
     renderLinks()
@@ -503,7 +538,7 @@ final class IssueInspectorViewController: NSViewController {
     return value
   }
 
-  private func saveSummary() {
+  @objc private func saveSummary() {
     guard let details, !saving else {
       return
     }
@@ -675,6 +710,7 @@ final class IssueInspectorViewController: NSViewController {
 
   private func setControlsEnabled(_ enabled: Bool) {
     summaryField.isEnabled = enabled
+    summarySaveButton.isEnabled = enabled
     descriptionTextView.isEditable = enabled
     descriptionSaveButton.isEnabled = enabled
   }
