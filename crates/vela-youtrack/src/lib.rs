@@ -7,9 +7,8 @@ use thiserror::Error;
 use url::Url;
 use vela_core::{CustomFieldValue, Issue, User};
 
-const USER_FIELDS: &str = "id,login,fullName,email,guest";
-const ISSUE_FIELDS: &str =
-    "id,idReadable,summary,resolved,customFields(id,name,$type,value(id,name,login,fullName))";
+const USER_FIELDS: &str = "id,login,fullName,guest";
+const ISSUE_FIELDS: &str = "id,idReadable,summary,resolved";
 
 #[derive(Debug, Error)]
 pub enum Error {

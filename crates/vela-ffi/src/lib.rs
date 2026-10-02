@@ -1,5 +1,6 @@
 use std::ffi::{CStr, CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::LazyLock;
 
 use serde::Serialize;
 use vela_core::{Issue, User};
@@ -78,11 +79,16 @@ fn client(service_url: &str, bearer_token: Option<&str>) -> Result<Client, Strin
     .map_err(|error| error.to_string())
 }
 
-fn runtime() -> Result<tokio::runtime::Runtime, String> {
-    tokio::runtime::Builder::new_current_thread()
+static RUNTIME: LazyLock<Result<tokio::runtime::Runtime, String>> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
         .enable_all()
         .build()
         .map_err(|error| format!("failed to start async runtime: {error}"))
+});
+
+fn runtime() -> Result<&'static tokio::runtime::Runtime, String> {
+    RUNTIME.as_ref().map_err(|error| error.clone())
 }
 
 fn read_required_string(value: *const c_char, name: &str) -> Result<String, String> {
@@ -144,6 +150,7 @@ mod android {
 
     use super::{bridge_response_json, load_my_work};
     use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::LazyLock;
 
     #[unsafe(no_mangle)]
     pub extern "system" fn Java_com_vela_VelaRustModule_initializeRust<'local>(
