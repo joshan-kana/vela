@@ -702,6 +702,7 @@ final class MyWorkViewController:
       }
     )
 
+    setPrimaryContentHidden(true)
     addChild(inspector)
     inspector.view.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(inspector.view)
@@ -739,6 +740,7 @@ final class MyWorkViewController:
       }
     )
 
+    setPrimaryContentHidden(true)
     addChild(quickCreate)
     quickCreate.view.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(quickCreate.view)
@@ -761,6 +763,7 @@ final class MyWorkViewController:
     quickCreate.view.removeFromSuperview()
     quickCreate.removeFromParent()
     self.quickCreate = nil
+    setPrimaryContentHidden(false)
   }
 
   private func handleKeyEvent(_ event: NSEvent) -> NSEvent? {
@@ -959,6 +962,7 @@ final class MyWorkViewController:
       }
     )
 
+    setPrimaryContentHidden(true)
     addChild(palette)
     palette.view.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(palette.view)
@@ -981,6 +985,7 @@ final class MyWorkViewController:
     commandPalette.view.removeFromSuperview()
     commandPalette.removeFromParent()
     self.commandPalette = nil
+    setPrimaryContentHidden(false)
   }
 
   private func hideInspector() {
@@ -991,8 +996,27 @@ final class MyWorkViewController:
     inspector.view.removeFromSuperview()
     inspector.removeFromParent()
     self.inspector = nil
+    setPrimaryContentHidden(false)
     tableView.deselectAll(nil)
     view.window?.makeFirstResponder(tableView)
+  }
+
+  private func setPrimaryContentHidden(_ hidden: Bool) {
+    titleLabel.isHidden = hidden
+
+    if hidden {
+      connectionStack.isHidden = true
+      accountStack.isHidden = true
+      workControlsStack.isHidden = true
+      scrollView.isHidden = true
+      return
+    }
+
+    let connected = !connectedServiceURL.isEmpty
+    connectionStack.isHidden = connected
+    accountStack.isHidden = !connected
+    workControlsStack.isHidden = !connected
+    scrollView.isHidden = !connected
   }
 
   private func updateIssueList(_ updated: IssueDetails) {
