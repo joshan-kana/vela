@@ -651,12 +651,12 @@ fn load_my_work_prefetch(
 ) -> Result<MyWorkPrefetch, String> {
     let client = client(service_url, bearer_token)?;
     let runtime = runtime()?;
+    let key = client_cache_key(service_url, bearer_token);
 
     runtime.block_on(async {
-        let issues = client
-            .issue_details_list(Some("for: me #Unresolved"), top)
-            .await
-            .map_err(|error| error.to_string())?;
+        let queries =
+            cached_my_work_queries(&key).unwrap_or_else(|| vec!["for: me #Unresolved".to_owned()]);
+        let issues = issue_details_for_queries(&client, &queries, top).await?;
 
         let project_ids: HashSet<String> = issues
             .iter()
@@ -694,13 +694,14 @@ fn load_my_work(
 ) -> Result<MyWork, String> {
     let client = client(service_url, bearer_token)?;
     let runtime = runtime()?;
+    let key = client_cache_key(service_url, bearer_token);
 
     runtime.block_on(async {
-        let (user, issues) = tokio::try_join!(
-            client.current_user(),
-            client.issues(Some("for: me #Unresolved"), top)
-        )
-        .map_err(|error| error.to_string())?;
+        let (user, queries) = tokio::join!(client.current_user(), resolve_my_work_queries(&client));
+        let user = user.map_err(|error| error.to_string())?;
+        let issues = issues_for_queries(&client, &queries, top).await?;
+
+        cache_my_work_queries(key, queries);
 
         Ok(MyWork { user, issues })
     })
@@ -715,12 +716,143 @@ struct ClientCacheKey {
 static CLIENTS: LazyLock<Mutex<HashMap<ClientCacheKey, Client>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+static MY_WORK_QUERIES: LazyLock<Mutex<HashMap<ClientCacheKey, Vec<String>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn client_cache_key(service_url: &str, bearer_token: Option<&str>) -> ClientCacheKey {
+    ClientCacheKey {
+        service_url: service_url.to_owned(),
+        bearer_token: bearer_token
+            .filter(|token| !token.is_empty())
+            .map(str::to_owned),
+    }
+}
+
+fn cached_my_work_queries(key: &ClientCacheKey) -> Option<Vec<String>> {
+    MY_WORK_QUERIES.lock().ok()?.get(key).cloned()
+}
+
+fn cache_my_work_queries(key: ClientCacheKey, queries: Vec<String>) {
+    if let Ok(mut cache) = MY_WORK_QUERIES.lock() {
+        cache.insert(key, queries);
+    }
+}
+
+async fn resolve_my_work_queries(client: &Client) -> Vec<String> {
+    match client.saved_queries(0, 42).await {
+        Ok(saved_queries) => select_my_work_queries(&saved_queries),
+        Err(_) => vec!["for: me #Unresolved".to_owned()],
+    }
+}
+
+fn select_my_work_queries(saved_queries: &[SavedQuery]) -> Vec<String> {
+    if let Some(query) = saved_queries
+        .iter()
+        .find(|saved| saved.name.eq_ignore_ascii_case("My Work"))
+        .and_then(|saved| saved.query.as_deref())
+        .map(str::trim)
+        .filter(|query| !query.is_empty())
+    {
+        return vec![query.to_owned()];
+    }
+
+    let active_queries: Vec<String> = saved_queries
+        .iter()
+        .filter(|saved| saved.name.to_ascii_lowercase().ends_with(" - active"))
+        .filter_map(|saved| saved.query.as_deref())
+        .map(str::trim)
+        .filter(|query| !query.is_empty())
+        .map(str::to_owned)
+        .collect();
+
+    if active_queries.is_empty() {
+        vec!["for: me #Unresolved".to_owned()]
+    } else {
+        active_queries
+    }
+}
+
+async fn issues_for_queries(
+    client: &Client,
+    queries: &[String],
+    top: usize,
+) -> Result<Vec<Issue>, String> {
+    let mut tasks = tokio::task::JoinSet::new();
+    for (index, query) in queries.iter().cloned().enumerate() {
+        let client = client.clone();
+        tasks.spawn(async move {
+            client
+                .issues(Some(&query), top)
+                .await
+                .map(|issues| (index, issues))
+                .map_err(|error| error.to_string())
+        });
+    }
+
+    let mut pages = Vec::new();
+    while let Some(result) = tasks.join_next().await {
+        pages.push(result.map_err(|error| format!("My Work query task failed: {error}"))??);
+    }
+    pages.sort_by_key(|(index, _)| *index);
+
+    let mut seen = HashSet::new();
+    let mut issues = Vec::new();
+    for (_, page) in pages {
+        for issue in page {
+            if seen.insert(issue.id.clone()) {
+                issues.push(issue);
+                if issues.len() == top {
+                    return Ok(issues);
+                }
+            }
+        }
+    }
+
+    Ok(issues)
+}
+
+async fn issue_details_for_queries(
+    client: &Client,
+    queries: &[String],
+    top: usize,
+) -> Result<Vec<IssueDetails>, String> {
+    let mut tasks = tokio::task::JoinSet::new();
+    for (index, query) in queries.iter().cloned().enumerate() {
+        let client = client.clone();
+        tasks.spawn(async move {
+            client
+                .issue_details_list(Some(&query), top)
+                .await
+                .map(|issues| (index, issues))
+                .map_err(|error| error.to_string())
+        });
+    }
+
+    let mut pages = Vec::new();
+    while let Some(result) = tasks.join_next().await {
+        pages.push(result.map_err(|error| format!("My Work prefetch task failed: {error}"))??);
+    }
+    pages.sort_by_key(|(index, _)| *index);
+
+    let mut seen = HashSet::new();
+    let mut issues = Vec::new();
+    for (_, page) in pages {
+        for issue in page {
+            if seen.insert(issue.id.clone()) {
+                issues.push(issue);
+                if issues.len() == top {
+                    return Ok(issues);
+                }
+            }
+        }
+    }
+
+    Ok(issues)
+}
+
 fn client(service_url: &str, bearer_token: Option<&str>) -> Result<Client, String> {
     let bearer_token = bearer_token.filter(|token| !token.is_empty());
-    let key = ClientCacheKey {
-        service_url: service_url.to_owned(),
-        bearer_token: bearer_token.map(str::to_owned),
-    };
+    let key = client_cache_key(service_url, bearer_token);
 
     if let Some(client) = CLIENTS
         .lock()
@@ -803,6 +935,64 @@ fn json_c_string(json: String) -> *mut c_char {
     CString::new(json)
         .expect("serialized JSON must not contain NUL bytes")
         .into_raw()
+}
+
+#[cfg(test)]
+mod my_work_tests {
+    use vela_core::SavedQuery;
+
+    use super::select_my_work_queries;
+
+    fn saved(name: &str, query: &str) -> SavedQuery {
+        SavedQuery {
+            id: name.to_owned(),
+            name: name.to_owned(),
+            query: Some(query.to_owned()),
+            owner: None,
+        }
+    }
+
+    #[test]
+    fn prefers_explicit_my_work_saved_search() {
+        let saved_queries = vec![
+            saved("Personal - Active", "project: psn #Unresolved"),
+            saved("My Work", "tag: focus #Unresolved"),
+            saved(
+                "University - Active",
+                "organization: University #Unresolved",
+            ),
+        ];
+
+        assert_eq!(
+            select_my_work_queries(&saved_queries),
+            vec!["tag: focus #Unresolved"]
+        );
+    }
+
+    #[test]
+    fn combines_active_saved_searches_when_my_work_is_absent() {
+        let saved_queries = vec![
+            saved("Personal - Active", "project: psn #Unresolved"),
+            saved("University - All", "organization: University #Unresolved"),
+            saved(
+                "University - Active",
+                "organization: University Status: -HOLD #Unresolved",
+            ),
+        ];
+
+        assert_eq!(
+            select_my_work_queries(&saved_queries),
+            vec![
+                "project: psn #Unresolved",
+                "organization: University Status: -HOLD #Unresolved",
+            ]
+        );
+    }
+
+    #[test]
+    fn falls_back_to_assigned_unresolved_issues() {
+        assert_eq!(select_my_work_queries(&[]), vec!["for: me #Unresolved"]);
+    }
 }
 
 #[cfg(target_os = "android")]
