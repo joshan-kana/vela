@@ -746,6 +746,23 @@ final class IssueInspectorViewController: NSViewController {
     summarySaveButton.isEnabled = enabled
     descriptionTextView.isEditable = enabled
     descriptionSaveButton.isEnabled = enabled
+    setFieldControlsEnabled(enabled, in: fieldsStack)
+  }
+
+  private func setFieldControlsEnabled(_ enabled: Bool, in view: NSView) {
+    if let textField = view as? NSTextField, textField.isEditable {
+      textField.isEnabled = enabled
+    } else if let control = view as? NSControl,
+      control is NSPopUpButton
+        || control is NSButton
+        || control is NSDatePicker
+    {
+      control.isEnabled = enabled
+    }
+
+    for subview in view.subviews {
+      setFieldControlsEnabled(enabled, in: subview)
+    }
   }
 
   private func show(error: Error) {
