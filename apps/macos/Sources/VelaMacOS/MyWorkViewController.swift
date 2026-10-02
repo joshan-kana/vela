@@ -855,6 +855,9 @@ final class MyWorkViewController:
       return
     }
 
+    let cachedDetails = prefetchedIssueDetails[issue.id]
+    let cachedSchema = cachedDetails.flatMap { prefetchedProjectSchemas[$0.project.id] }
+
     actionBusy = true
     tableView.isEnabled = false
     actionErrorLabel.isHidden = true
@@ -867,16 +870,28 @@ final class MyWorkViewController:
       do {
         let bearerToken =
           try self.connectedAccountID.map { try SecureAccountStore.bearerToken(for: $0) } ?? ""
-        let details = try RustBridge.loadIssueDetails(
-          serviceURL: self.connectedServiceURL,
-          bearerToken: bearerToken,
-          issueID: issue.id
-        )
-        let schema = try RustBridge.loadProjectSchema(
-          serviceURL: self.connectedServiceURL,
-          bearerToken: bearerToken,
-          projectID: details.project.id
-        )
+
+        let details: IssueDetails
+        if let cachedDetails {
+          details = cachedDetails
+        } else {
+          details = try RustBridge.loadIssueDetails(
+            serviceURL: self.connectedServiceURL,
+            bearerToken: bearerToken,
+            issueID: issue.id
+          )
+        }
+
+        let schema: ProjectSchema
+        if let cachedSchema {
+          schema = cachedSchema
+        } else {
+          schema = try RustBridge.loadProjectSchema(
+            serviceURL: self.connectedServiceURL,
+            bearerToken: bearerToken,
+            projectID: details.project.id
+          )
+        }
         let action = try IssueActionResolver.resolveAction(issue: details, schema: schema)
         let result = try RustBridge.executeIssueAction(
           serviceURL: self.connectedServiceURL,
