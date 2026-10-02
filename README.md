@@ -18,3 +18,9 @@ Useful commands:
 nix fmt          # alias: fmt
 nix flake check  # alias: chk
 ```
+
+Launch the pinned Android API 36 emulator:
+
+```sh
+nix run .#android-emulator
+```
