@@ -11,6 +11,10 @@ char *vela_load_my_work_json(
     const char *service_url,
     const char *bearer_token,
     size_t top);
+char *vela_prefetch_my_work_json(
+    const char *service_url,
+    const char *bearer_token,
+    size_t top);
 char *vela_discover_json(
     const char *service_url,
     const char *bearer_token);
@@ -70,6 +74,10 @@ char *vela_apply_custom_field_event_json(
     const char *field_id,
     const char *field_type,
     const char *event_id);
+char *vela_execute_issue_action_json(
+    const char *service_url,
+    const char *bearer_token,
+    const char *action_json);
 char *vela_begin_oauth_json(
     const char *service_url,
     const char *hub_url,

@@ -20,6 +20,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   private let connectionStack = NSStackView()
   private let savedAccountsStack = NSStackView()
   private let accountStack = NSStackView()
+  private let newIssueButton = NSButton(title: "New issue", target: nil, action: nil)
   private let disconnectButton = NSButton(title: "Disconnect", target: nil, action: nil)
   private let tableView = NSTableView()
   private let scrollView = NSScrollView()
@@ -28,7 +29,12 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   private var connectedServiceURL = ""
   private var connectedAccountID: String?
   private var inspector: IssueInspectorViewController?
+  private var quickCreate: QuickCreateViewController?
   private var oauthLoopbackServer: OAuthLoopbackServer?
+  private var prefetchedIssueDetails: [String: IssueDetails] = [:]
+  private var prefetchedProjectSchemas: [String: ProjectSchema] = [:]
+  private var prefetchGeneration = UUID()
+  private var prefetchProtectedIssueIDs: Set<String> = []
 
   override func loadView() {
     let root = NSView()
@@ -104,11 +110,18 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     accountName.font = .systemFont(ofSize: 14, weight: .semibold)
     accountDetail.textColor = .secondaryLabelColor
 
+    newIssueButton.target = self
+    newIssueButton.action = #selector(showQuickCreate)
+    newIssueButton.bezelStyle = .inline
+
     disconnectButton.target = self
     disconnectButton.action = #selector(disconnect)
     disconnectButton.bezelStyle = .inline
 
-    accountStack.setViews([accountName, accountDetail, disconnectButton], in: .top)
+    accountStack.setViews(
+      [accountName, accountDetail, newIssueButton, disconnectButton],
+      in: .top
+    )
     accountStack.orientation = .vertical
     accountStack.alignment = .leading
     accountStack.spacing = 2
@@ -372,8 +385,17 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     setConnecting(false)
     tokenField.stringValue = ""
 
+    let connectionChanged =
+      connectedServiceURL != serviceURL
+      || connectedAccountID != accountID
+
     connectedServiceURL = serviceURL
     connectedAccountID = accountID
+
+    if connectionChanged {
+      prefetchedIssueDetails.removeAll()
+      prefetchedProjectSchemas.removeAll()
+    }
 
     if let accountID {
       UserDefaults.standard.set(accountID, forKey: Self.lastConnectedAccountIDKey)
@@ -387,6 +409,50 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     connectionStack.isHidden = true
     scrollView.isHidden = false
     tableView.reloadData()
+    prefetchMyWork()
+  }
+
+  private func prefetchMyWork() {
+    let serviceURL = connectedServiceURL
+    let accountID = connectedAccountID
+    let generation = UUID()
+    prefetchGeneration = generation
+    prefetchProtectedIssueIDs.removeAll()
+
+    DispatchQueue.global(qos: .utility).async { [weak self] in
+      guard let self else {
+        return
+      }
+
+      do {
+        let bearerToken =
+          try accountID.map { try SecureAccountStore.bearerToken(for: $0) } ?? ""
+        let prefetch = try RustBridge.prefetchMyWork(
+          serviceURL: serviceURL,
+          bearerToken: bearerToken
+        )
+
+        DispatchQueue.main.async {
+          guard
+            self.prefetchGeneration == generation,
+            self.connectedServiceURL == serviceURL,
+            self.connectedAccountID == accountID
+          else {
+            return
+          }
+
+          for issue in prefetch.issues
+          where !self.prefetchProtectedIssueIDs.contains(issue.id) {
+            self.prefetchedIssueDetails[issue.id] = issue
+          }
+          for schema in prefetch.schemas {
+            self.prefetchedProjectSchemas[schema.project.id] = schema
+          }
+        }
+      } catch {
+        // Prefetch is opportunistic. The inspector still has its normal live-fetch path.
+      }
+    }
   }
 
   private func show(error: Error) {
@@ -498,9 +564,14 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
 
   @objc private func disconnect() {
     hideInspector()
+    hideQuickCreate()
     issues = []
     connectedServiceURL = ""
     connectedAccountID = nil
+    prefetchGeneration = UUID()
+    prefetchProtectedIssueIDs.removeAll()
+    prefetchedIssueDetails.removeAll()
+    prefetchedProjectSchemas.removeAll()
     UserDefaults.standard.removeObject(forKey: Self.lastConnectedAccountIDKey)
     accountStack.isHidden = true
     scrollView.isHidden = true
@@ -519,15 +590,32 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   }
 
   private func showInspector(for issue: MyWorkIssue) {
-    guard inspector == nil, !connectedServiceURL.isEmpty else {
+    showInspector(issueID: issue.id, preview: issue)
+  }
+
+  private func showInspector(
+    issueID: String,
+    preview: MyWorkIssue? = nil,
+    prefetchedDetails explicitDetails: IssueDetails? = nil
+  ) {
+    guard inspector == nil, quickCreate == nil, !connectedServiceURL.isEmpty else {
       return
+    }
+
+    let cachedDetails = explicitDetails ?? prefetchedIssueDetails[issueID]
+    let cachedSchema = cachedDetails.flatMap { prefetchedProjectSchemas[$0.project.id] }
+
+    if let cachedDetails {
+      prefetchedIssueDetails[issueID] = cachedDetails
     }
 
     let inspector = IssueInspectorViewController(
       serviceURL: connectedServiceURL,
       accountID: connectedAccountID,
-      issueID: issue.id,
-      preview: issue,
+      issueID: issueID,
+      preview: preview,
+      prefetchedDetails: cachedDetails,
+      prefetchedSchema: cachedSchema,
       onBack: { [weak self] in
         self?.hideInspector()
       },
@@ -550,6 +638,52 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     self.inspector = inspector
   }
 
+  @objc private func showQuickCreate() {
+    guard quickCreate == nil, inspector == nil, !connectedServiceURL.isEmpty else {
+      return
+    }
+
+    let quickCreate = QuickCreateViewController(
+      serviceURL: connectedServiceURL,
+      accountID: connectedAccountID,
+      onCancel: { [weak self] in
+        self?.hideQuickCreate()
+      },
+      onCreated: { [weak self] issue in
+        guard let self else {
+          return
+        }
+
+        self.prefetchedIssueDetails[issue.id] = issue
+        self.hideQuickCreate()
+        self.showInspector(issueID: issue.id, prefetchedDetails: issue)
+      }
+    )
+
+    addChild(quickCreate)
+    quickCreate.view.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(quickCreate.view)
+
+    NSLayoutConstraint.activate([
+      quickCreate.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      quickCreate.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      quickCreate.view.topAnchor.constraint(equalTo: view.topAnchor),
+      quickCreate.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+    ])
+
+    self.quickCreate = quickCreate
+  }
+
+  private func hideQuickCreate() {
+    guard let quickCreate else {
+      return
+    }
+
+    quickCreate.view.removeFromSuperview()
+    quickCreate.removeFromParent()
+    self.quickCreate = nil
+  }
+
   private func hideInspector() {
     guard let inspector else {
       return
@@ -562,18 +696,26 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   }
 
   private func updateIssueList(_ updated: IssueDetails) {
-    guard let index = issues.firstIndex(where: { $0.id == updated.id }) else {
-      return
+    prefetchProtectedIssueIDs.insert(updated.id)
+
+    if updated.resolvedAt != nil {
+      prefetchedIssueDetails.removeValue(forKey: updated.id)
+      issues.removeAll { $0.id == updated.id }
+    } else {
+      prefetchedIssueDetails[updated.id] = updated
+
+      if let index = issues.firstIndex(where: { $0.id == updated.id }) {
+        issues[index] = MyWorkIssue(
+          id: updated.id,
+          idReadable: updated.idReadable,
+          summary: updated.summary,
+          resolvedAt: updated.resolvedAt
+        )
+      }
     }
 
-    issues[index] = MyWorkIssue(
-      id: updated.id,
-      idReadable: updated.idReadable,
-      summary: updated.summary,
-      resolvedAt: updated.resolvedAt
-    )
-    tableView.reloadData(
-      forRowIndexes: IndexSet(integer: index), columnIndexes: IndexSet(integer: 0))
+    tableView.reloadData()
+    tableView.deselectAll(nil)
   }
 
   func numberOfRows(in tableView: NSTableView) -> Int {

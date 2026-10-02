@@ -155,6 +155,47 @@ export type IssueLink = {
   issues: IssueRef[];
 };
 
+export type IssueFieldChange =
+  | {
+      mode: 'value';
+      field_id: string;
+      field_type: string;
+      value: unknown;
+    }
+  | {
+      mode: 'event';
+      field_id: string;
+      field_type: string;
+      event_id: string;
+    };
+
+export type IssueAction =
+  | {
+      kind: 'create_issue';
+      project_id: string;
+      summary: string;
+      description: string | null;
+    }
+  | { kind: 'edit_summary'; issue_id: string; summary: string }
+  | { kind: 'set_state'; issue_id: string; change: IssueFieldChange }
+  | { kind: 'set_priority'; issue_id: string; change: IssueFieldChange }
+  | { kind: 'set_start'; issue_id: string; change: IssueFieldChange }
+  | { kind: 'set_due'; issue_id: string; change: IssueFieldChange }
+  | { kind: 'assign_user'; issue_id: string; change: IssueFieldChange }
+  | { kind: 'move_project'; issue_id: string; project_id: string }
+  | { kind: 'add_tag'; issue_id: string; tag_id: string }
+  | {
+      kind: 'link_issue';
+      issue_id: string;
+      link_id: string;
+      target_issue_id: string;
+    }
+  | { kind: 'delete_issue'; issue_id: string };
+
+export type IssueActionResult =
+  | { kind: 'issue'; issue: IssueDetails }
+  | { kind: 'deleted'; issue_id: string };
+
 type BridgeResponse<T> =
   | {
       status: 'ok';
@@ -216,6 +257,16 @@ type VelaRustModule = {
     bearerToken: string,
     skip: number,
     top: number,
+  ): Promise<string>;
+  executeIssueAction?(
+    serviceUrl: string,
+    bearerToken: string,
+    action: IssueAction,
+  ): Promise<IssueActionResult>;
+  executeIssueActionJson?(
+    serviceUrl: string,
+    bearerToken: string,
+    actionJson: string,
   ): Promise<string>;
   loadIssueDetails?(
     serviceUrl: string,
@@ -464,6 +515,30 @@ export async function loadSavedQueries(
   }
 
   throw new Error('Vela Rust bridge has no supported saved queries method');
+}
+
+export async function executeIssueAction(
+  serviceUrl: string,
+  bearerToken: string,
+  action: IssueAction,
+): Promise<IssueActionResult> {
+  const rust = module();
+
+  if (rust.executeIssueAction) {
+    return rust.executeIssueAction(serviceUrl, bearerToken, action);
+  }
+
+  if (rust.executeIssueActionJson) {
+    return decodeBridgeResponse(
+      await rust.executeIssueActionJson(
+        serviceUrl,
+        bearerToken,
+        JSON.stringify(action),
+      ),
+    );
+  }
+
+  throw new Error('Vela Rust bridge has no supported issue action method');
 }
 
 export async function loadIssueDetails(

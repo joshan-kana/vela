@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 
 import IssueInspector from './src/components/IssueInspector';
+import QuickCreateIssue from './src/components/QuickCreateIssue';
 import {
   beginOAuth,
   completeOAuth,
@@ -48,6 +49,7 @@ function App() {
   const [work, setWork] = useState<MyWork | null>(null);
   const [session, setSession] = useState<Connection | null>(null);
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
+  const [creatingIssue, setCreatingIssue] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
 
@@ -235,6 +237,7 @@ function App() {
 
   function disconnect() {
     setSelectedIssueId(null);
+    setCreatingIssue(false);
     setSession(null);
     setWork(null);
   }
@@ -302,6 +305,16 @@ function App() {
             }}
             palette={palette}
           />
+        ) : creatingIssue && session ? (
+          <QuickCreateIssue
+            connection={session}
+            onCancel={() => setCreatingIssue(false)}
+            onCreated={issue => {
+              setCreatingIssue(false);
+              setSelectedIssueId(issue.id);
+            }}
+            palette={palette}
+          />
         ) : (
           <>
             <Text style={[styles.heading, { color: palette.text }]}>
@@ -324,6 +337,17 @@ function App() {
                       {work.user.login}
                       {work.user.guest ? ' · Guest access' : ''}
                     </Text>
+                    <Pressable
+                      accessibilityLabel="New issue"
+                      accessibilityRole="button"
+                      onPress={() => setCreatingIssue(true)}
+                      style={({ pressed }) => [
+                        styles.textButton,
+                        pressed && styles.buttonPressed,
+                      ]}
+                    >
+                      <Text style={{ color: palette.accent }}>New issue</Text>
+                    </Pressable>
                     <Pressable
                       accessibilityRole="button"
                       onPress={disconnect}

@@ -5,12 +5,15 @@ final class IssueInspectorViewController: NSViewController {
   private let accountID: String?
   private let issueID: String
   private let preview: MyWorkIssue?
+  private let prefetchedDetails: IssueDetails?
+  private let prefetchedSchema: ProjectSchema?
   private let onBack: () -> Void
   private let onIssueChanged: (IssueDetails) -> Void
 
   private let idLabel = NSTextField(labelWithString: "")
   private let projectLabel = NSTextField(labelWithString: "")
   private let summaryField = NSTextField()
+  private let summarySaveButton = NSButton(title: "Save summary", target: nil, action: nil)
   private let descriptionTextView = NSTextView()
   private let descriptionSaveButton = NSButton(title: "Save description", target: nil, action: nil)
   private let fieldsStack = NSStackView()
@@ -25,12 +28,15 @@ final class IssueInspectorViewController: NSViewController {
   private var loaded = false
   private var enrichmentLoaded = false
   private var saving = false
+  private var localMutationRevision = 0
 
   init(
     serviceURL: String,
     accountID: String?,
     issueID: String,
     preview: MyWorkIssue? = nil,
+    prefetchedDetails: IssueDetails? = nil,
+    prefetchedSchema: ProjectSchema? = nil,
     onBack: @escaping () -> Void,
     onIssueChanged: @escaping (IssueDetails) -> Void
   ) {
@@ -38,6 +44,8 @@ final class IssueInspectorViewController: NSViewController {
     self.accountID = accountID
     self.issueID = issueID
     self.preview = preview
+    self.prefetchedDetails = prefetchedDetails
+    self.prefetchedSchema = prefetchedSchema
     self.onBack = onBack
     self.onIssueChanged = onIssueChanged
     super.init(nibName: nil, bundle: nil)
@@ -72,9 +80,9 @@ final class IssueInspectorViewController: NSViewController {
     summaryField.font = .systemFont(ofSize: 22, weight: .semibold)
     summaryField.setAccessibilityLabel("Issue summary")
 
-    let summarySaveButton = ClosureButton(title: "Save summary") { [weak self] in
-      self?.saveSummary()
-    }
+    summarySaveButton.target = self
+    summarySaveButton.action = #selector(saveSummary)
+    summarySaveButton.bezelStyle = .rounded
 
     descriptionTextView.isRichText = false
     descriptionTextView.isAutomaticQuoteSubstitutionEnabled = false
@@ -163,7 +171,12 @@ final class IssueInspectorViewController: NSViewController {
 
     view = root
 
-    if let preview {
+    if let prefetchedDetails {
+      details = prefetchedDetails
+      schema = prefetchedSchema
+      enrichedFields = prefetchedDetails.customFields
+      render()
+    } else if let preview {
       idLabel.stringValue = preview.idReadable
       summaryField.stringValue = preview.summary
       projectLabel.stringValue = "Loading…"
@@ -185,7 +198,12 @@ final class IssueInspectorViewController: NSViewController {
   }
 
   private func loadIssue() {
-    setBusy(true)
+    let blocksInteraction = details == nil
+    let refreshRevision = localMutationRevision
+    if blocksInteraction {
+      setBusy(true)
+    }
+
     errorLabel.isHidden = true
     enrichmentLoaded = false
 
@@ -202,12 +220,31 @@ final class IssueInspectorViewController: NSViewController {
           issueID: self.issueID
         )
         DispatchQueue.main.async {
+          guard self.localMutationRevision == refreshRevision else {
+            if blocksInteraction {
+              self.setBusy(false)
+            }
+            return
+          }
+
+          let previousDetails = self.details
+          let preserveSummaryDraft =
+            previousDetails.map { self.summaryField.stringValue != $0.summary } ?? false
+          let preserveDescriptionDraft =
+            previousDetails.map {
+              self.descriptionTextView.string != ($0.description ?? "")
+            } ?? false
+
           self.details = issue
-          self.schema = nil
           self.links = []
-          self.enrichedFields = nil
-          self.render()
-          self.setBusy(false)
+          self.render(
+            preserveSummaryDraft: preserveSummaryDraft,
+            preserveDescriptionDraft: preserveDescriptionDraft
+          )
+
+          if blocksInteraction {
+            self.setBusy(false)
+          }
         }
 
         let enrichment = try RustBridge.loadIssueEnrichment(
@@ -220,7 +257,9 @@ final class IssueInspectorViewController: NSViewController {
         DispatchQueue.main.async {
           self.schema = enrichment.schema
           self.links = enrichment.links
-          self.enrichedFields = enrichment.customFields
+          if self.localMutationRevision == refreshRevision {
+            self.enrichedFields = enrichment.customFields
+          }
           self.enrichmentLoaded = true
           self.renderFields()
           self.renderLinks()
@@ -228,7 +267,9 @@ final class IssueInspectorViewController: NSViewController {
       } catch {
         DispatchQueue.main.async {
           self.show(error: error)
-          self.setBusy(false)
+          if blocksInteraction {
+            self.setBusy(false)
+          }
         }
       }
     }
@@ -242,15 +283,23 @@ final class IssueInspectorViewController: NSViewController {
     return try SecureAccountStore.bearerToken(for: accountID)
   }
 
-  private func render() {
+  private func render(
+    preserveSummaryDraft: Bool = false,
+    preserveDescriptionDraft: Bool = false
+  ) {
     guard let details else {
       return
     }
 
     idLabel.stringValue = details.idReadable
     projectLabel.stringValue = "\(details.project.name) · \(details.project.shortName)"
-    summaryField.stringValue = details.summary
-    descriptionTextView.string = details.description ?? ""
+
+    if !preserveSummaryDraft {
+      summaryField.stringValue = details.summary
+    }
+    if !preserveDescriptionDraft {
+      descriptionTextView.string = details.description ?? ""
+    }
 
     renderFields()
     renderLinks()
@@ -494,7 +543,7 @@ final class IssueInspectorViewController: NSViewController {
     return value
   }
 
-  private func saveSummary() {
+  @objc private func saveSummary() {
     guard let details, !saving else {
       return
     }
@@ -584,6 +633,7 @@ final class IssueInspectorViewController: NSViewController {
     operation: @escaping () throws -> Value,
     apply: @escaping (Value) -> Void
   ) {
+    localMutationRevision += 1
     saving = true
     setControlsEnabled(false)
     errorLabel.isHidden = true
@@ -616,10 +666,40 @@ final class IssueInspectorViewController: NSViewController {
   }
 
   private func replaceDetails(_ updated: IssueDetails) {
-    details = updated
-    enrichedFields = nil
+    let mergedFields = updated.customFields.map { latest in
+      guard
+        let enriched = enrichedFields?.first(where: { $0.id == latest.id })
+      else {
+        return latest
+      }
+
+      return CustomFieldValue(
+        id: latest.id,
+        name: latest.name,
+        fieldType: latest.fieldType,
+        value: latest.value,
+        possibleEvents: enriched.possibleEvents
+      )
+    }
+
+    let merged = IssueDetails(
+      id: updated.id,
+      idReadable: updated.idReadable,
+      summary: updated.summary,
+      description: updated.description,
+      createdAt: updated.createdAt,
+      updatedAt: updated.updatedAt,
+      resolvedAt: updated.resolvedAt,
+      project: updated.project,
+      customFields: mergedFields
+    )
+
+    details = merged
+    if enrichedFields != nil {
+      enrichedFields = mergedFields
+    }
     render()
-    onIssueChanged(updated)
+    onIssueChanged(merged)
   }
 
   private func replaceField(_ updated: CustomFieldValue) {
@@ -631,6 +711,15 @@ final class IssueInspectorViewController: NSViewController {
       $0.id == updated.id ? updated : $0
     }
 
+    var snapshotFields = fields
+    if var enrichedFields,
+      let index = enrichedFields.firstIndex(where: { $0.id == updated.id })
+    {
+      enrichedFields[index] = updated
+      self.enrichedFields = enrichedFields
+      snapshotFields = enrichedFields
+    }
+
     let next = IssueDetails(
       id: details.id,
       idReadable: details.idReadable,
@@ -640,16 +729,10 @@ final class IssueInspectorViewController: NSViewController {
       updatedAt: details.updatedAt,
       resolvedAt: details.resolvedAt,
       project: details.project,
-      customFields: fields
+      customFields: snapshotFields
     )
 
     self.details = next
-    if var enrichedFields,
-      let index = enrichedFields.firstIndex(where: { $0.id == updated.id })
-    {
-      enrichedFields[index] = updated
-      self.enrichedFields = enrichedFields
-    }
     renderFields()
     onIssueChanged(next)
   }
@@ -666,8 +749,26 @@ final class IssueInspectorViewController: NSViewController {
 
   private func setControlsEnabled(_ enabled: Bool) {
     summaryField.isEnabled = enabled
+    summarySaveButton.isEnabled = enabled
     descriptionTextView.isEditable = enabled
     descriptionSaveButton.isEnabled = enabled
+    setFieldControlsEnabled(enabled, in: fieldsStack)
+  }
+
+  private func setFieldControlsEnabled(_ enabled: Bool, in view: NSView) {
+    if let textField = view as? NSTextField, textField.isEditable {
+      textField.isEnabled = enabled
+    } else if let control = view as? NSControl,
+      control is NSPopUpButton
+        || control is NSButton
+        || control is NSDatePicker
+    {
+      control.isEnabled = enabled
+    }
+
+    for subview in view.subviews {
+      setFieldControlsEnabled(enabled, in: subview)
+    }
   }
 
   private func show(error: Error) {

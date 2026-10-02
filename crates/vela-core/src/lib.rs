@@ -221,3 +221,134 @@ pub struct OAuthTokenSet {
     pub token_type: Option<String>,
     pub scope: Option<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum IssueFieldChange {
+    Value {
+        field_id: String,
+        field_type: String,
+        value: Value,
+    },
+    Event {
+        field_id: String,
+        field_type: String,
+        event_id: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum IssueAction {
+    CreateIssue {
+        project_id: String,
+        summary: String,
+        description: Option<String>,
+    },
+    EditSummary {
+        issue_id: String,
+        summary: String,
+    },
+    SetState {
+        issue_id: String,
+        change: IssueFieldChange,
+    },
+    SetPriority {
+        issue_id: String,
+        change: IssueFieldChange,
+    },
+    SetStart {
+        issue_id: String,
+        change: IssueFieldChange,
+    },
+    SetDue {
+        issue_id: String,
+        change: IssueFieldChange,
+    },
+    AssignUser {
+        issue_id: String,
+        change: IssueFieldChange,
+    },
+    MoveProject {
+        issue_id: String,
+        project_id: String,
+    },
+    AddTag {
+        issue_id: String,
+        tag_id: String,
+    },
+    LinkIssue {
+        issue_id: String,
+        link_id: String,
+        target_issue_id: String,
+    },
+    DeleteIssue {
+        issue_id: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum IssueActionResult {
+    Issue { issue: Box<IssueDetails> },
+    Deleted { issue_id: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{IssueAction, IssueFieldChange};
+
+    #[test]
+    fn serializes_semantic_issue_actions() {
+        let action = IssueAction::SetPriority {
+            issue_id: "vela-5".to_owned(),
+            change: IssueFieldChange::Value {
+                field_id: "123-4".to_owned(),
+                field_type: "SingleEnumIssueCustomField".to_owned(),
+                value: json!({ "id": "enum-1" }),
+            },
+        };
+
+        assert_eq!(
+            serde_json::to_value(action).unwrap(),
+            json!({
+                "kind": "set_priority",
+                "issue_id": "vela-5",
+                "change": {
+                    "mode": "value",
+                    "field_id": "123-4",
+                    "field_type": "SingleEnumIssueCustomField",
+                    "value": { "id": "enum-1" }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn state_actions_support_state_machine_events() {
+        let action = IssueAction::SetState {
+            issue_id: "vela-5".to_owned(),
+            change: IssueFieldChange::Event {
+                field_id: "123-9".to_owned(),
+                field_type: "StateMachineIssueCustomField".to_owned(),
+                event_id: "review".to_owned(),
+            },
+        };
+
+        assert_eq!(
+            serde_json::to_value(action).unwrap(),
+            json!({
+                "kind": "set_state",
+                "issue_id": "vela-5",
+                "change": {
+                    "mode": "event",
+                    "field_id": "123-9",
+                    "field_type": "StateMachineIssueCustomField",
+                    "event_id": "review"
+                }
+            })
+        );
+    }
+}

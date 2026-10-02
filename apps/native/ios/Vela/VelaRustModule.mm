@@ -813,6 +813,38 @@ RCT_REMAP_METHOD(loadSavedQueries,
   });
 }
 
+RCT_REMAP_METHOD(executeIssueAction,
+                 executeIssueActionWithServiceUrl:(NSString *)serviceUrl
+                 bearerToken:(NSString *)bearerToken
+                 action:(NSDictionary *)action
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSError *jsonError = nil;
+    NSData *actionData = [NSJSONSerialization dataWithJSONObject:action options:0 error:&jsonError];
+    if (actionData == nil) {
+      reject(@"vela_action", @"Unable to serialize issue action", jsonError);
+      return;
+    }
+
+    NSString *actionJson = [[NSString alloc] initWithData:actionData encoding:NSUTF8StringEncoding];
+    if (actionJson == nil) {
+      reject(@"vela_action", @"Unable to encode issue action", nil);
+      return;
+    }
+
+    const char *serviceUrlUtf8 = serviceUrl.UTF8String;
+    const char *tokenUtf8 = bearerToken.length > 0 ? bearerToken.UTF8String : NULL;
+    char *result = vela_execute_issue_action_json(
+      serviceUrlUtf8,
+      tokenUtf8,
+      actionJson.UTF8String
+    );
+    ResolveRustResponse(result, resolve, reject);
+  });
+}
+
 RCT_REMAP_METHOD(loadIssueDetails,
                  loadIssueDetailsWithServiceUrl:(NSString *)serviceUrl
                  bearerToken:(NSString *)bearerToken
