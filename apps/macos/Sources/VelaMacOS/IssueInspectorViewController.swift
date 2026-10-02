@@ -200,8 +200,6 @@ final class IssueInspectorViewController: NSViewController {
     let blocksInteraction = details == nil
     if blocksInteraction {
       setBusy(true)
-    } else {
-      progress.startAnimation(nil)
     }
 
     errorLabel.isHidden = true
@@ -237,8 +235,6 @@ final class IssueInspectorViewController: NSViewController {
 
           if blocksInteraction {
             self.setBusy(false)
-          } else {
-            self.progress.stopAnimation(nil)
           }
         }
 
@@ -262,8 +258,6 @@ final class IssueInspectorViewController: NSViewController {
           self.show(error: error)
           if blocksInteraction {
             self.setBusy(false)
-          } else {
-            self.progress.stopAnimation(nil)
           }
         }
       }
