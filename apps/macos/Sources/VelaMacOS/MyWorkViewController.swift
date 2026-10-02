@@ -30,7 +30,7 @@ final class MyWorkViewController:
   private let actionErrorLabel = NSTextField(wrappingLabelWithString: "")
   private let newIssueButton = NSButton(title: "New issue", target: nil, action: nil)
   private let disconnectButton = NSButton(title: "Disconnect", target: nil, action: nil)
-  private let tableView = NSTableView()
+  private let tableView = ShortcutTableView()
   private let scrollView = NSScrollView()
 
   private var issues: [MyWorkIssue] = []
@@ -173,7 +173,10 @@ final class MyWorkViewController:
     tableView.delegate = self
     tableView.dataSource = self
     tableView.target = self
-    tableView.action = #selector(openSelectedIssue)
+    tableView.doubleAction = #selector(openSelectedIssue)
+    tableView.handleKeyDown = { [weak self] event in
+      self?.handleTableKeyEvent(event) ?? false
+    }
 
     let issueColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("issue"))
     issueColumn.resizingMask = .autoresizingMask
@@ -470,6 +473,7 @@ final class MyWorkViewController:
     scrollView.isHidden = false
     tableView.reloadData()
     prefetchMyWork()
+    view.window?.makeFirstResponder(tableView)
   }
 
   private func prefetchMyWork() {
@@ -781,32 +785,47 @@ final class MyWorkViewController:
       return event
     }
 
+    if let firstResponder = view.window?.firstResponder as? NSView,
+      firstResponder === tableView || firstResponder.isDescendant(of: tableView)
+    {
+      return event
+    }
+
     guard modifiers.isEmpty else {
       return event
     }
 
+    return handleUnmodifiedShortcut(characters) ? nil : event
+  }
+
+  private func handleTableKeyEvent(_ event: NSEvent) -> Bool {
+    let shortcutModifiers: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+    guard event.modifierFlags.intersection(shortcutModifiers).isEmpty else {
+      return false
+    }
+
+    return handleUnmodifiedShortcut(event.charactersIgnoringModifiers?.lowercased() ?? "")
+  }
+
+  private func handleUnmodifiedShortcut(_ characters: String) -> Bool {
     switch characters {
     case "j":
       moveSelection(by: 1)
-      return nil
     case "k":
       moveSelection(by: -1)
-      return nil
     case "e":
       resolveSelectedIssue()
-      return nil
     case "c":
       showQuickCreate()
-      return nil
     case "/":
       focusSearch()
-      return nil
-    case "\r":
+    case "\r", "\n":
       openSelectedIssue()
-      return nil
     default:
-      return event
+      return false
     }
+
+    return true
   }
 
   private func moveSelection(by offset: Int) {
@@ -833,7 +852,6 @@ final class MyWorkViewController:
 
   private func resolveSelectedIssue() {
     guard !actionBusy, let issue = selectedIssue, !connectedServiceURL.isEmpty else {
-      NSSound.beep()
       return
     }
 
@@ -959,6 +977,7 @@ final class MyWorkViewController:
     inspector.removeFromParent()
     self.inspector = nil
     tableView.deselectAll(nil)
+    view.window?.makeFirstResponder(tableView)
   }
 
   private func updateIssueList(_ updated: IssueDetails) {
@@ -1030,6 +1049,18 @@ final class MyWorkViewController:
   }
   private static let lastConnectedAccountIDKey = "last_connected_account_id"
   private static let defaultOAuthScope = "YouTrack"
+}
+
+private final class ShortcutTableView: NSTableView {
+  var handleKeyDown: ((NSEvent) -> Bool)?
+
+  override func keyDown(with event: NSEvent) {
+    if handleKeyDown?(event) == true {
+      return
+    }
+
+    super.keyDown(with: event)
+  }
 }
 
 private final class AccountActionButton: NSButton {
