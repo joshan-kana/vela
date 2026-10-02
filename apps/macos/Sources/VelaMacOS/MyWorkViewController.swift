@@ -775,13 +775,13 @@ final class MyWorkViewController:
     let modifiers = event.modifierFlags.intersection(shortcutModifiers)
     let characters = event.charactersIgnoringModifiers?.lowercased() ?? ""
 
+    guard inspector == nil, quickCreate == nil, commandPalette == nil else {
+      return event
+    }
+
     if modifiers == .command, characters == "k" {
       showCommandPalette()
       return nil
-    }
-
-    guard inspector == nil, quickCreate == nil, commandPalette == nil else {
-      return event
     }
 
     if view.window?.firstResponder is NSTextView {
