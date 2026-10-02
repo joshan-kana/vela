@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 
 use serde::Serialize;
 use vela_core::{
@@ -26,6 +27,7 @@ struct MyWork {
 struct IssueEnrichment {
     schema: ProjectSchema,
     links: Vec<IssueLink>,
+    custom_fields: Vec<CustomFieldValue>,
 }
 
 #[unsafe(no_mangle)]
@@ -383,13 +385,18 @@ fn load_issue_enrichment(
     let runtime = runtime()?;
 
     runtime.block_on(async {
-        let (schema, links) = tokio::try_join!(
+        let (schema, links, custom_fields) = tokio::try_join!(
             client.project_schema(project_id),
-            client.issue_links(issue_id)
+            client.issue_links(issue_id),
+            client.issue_custom_fields(issue_id)
         )
         .map_err(|error| error.to_string())?;
 
-        Ok(IssueEnrichment { schema, links })
+        Ok(IssueEnrichment {
+            schema,
+            links,
+            custom_fields,
+        })
     })
 }
 
@@ -500,12 +507,43 @@ fn load_my_work(
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ClientCacheKey {
+    service_url: String,
+    bearer_token: Option<String>,
+}
+
+static CLIENTS: LazyLock<Mutex<HashMap<ClientCacheKey, Client>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 fn client(service_url: &str, bearer_token: Option<&str>) -> Result<Client, String> {
-    match bearer_token.filter(|token| !token.is_empty()) {
+    let bearer_token = bearer_token.filter(|token| !token.is_empty());
+    let key = ClientCacheKey {
+        service_url: service_url.to_owned(),
+        bearer_token: bearer_token.map(str::to_owned),
+    };
+
+    if let Some(client) = CLIENTS
+        .lock()
+        .map_err(|_| "YouTrack client cache lock was poisoned".to_owned())?
+        .get(&key)
+        .cloned()
+    {
+        return Ok(client);
+    }
+
+    let client = match bearer_token {
         Some(token) => Client::new(service_url, token),
         None => Client::guest(service_url),
     }
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+
+    CLIENTS
+        .lock()
+        .map_err(|_| "YouTrack client cache lock was poisoned".to_owned())?
+        .insert(key, client.clone());
+
+    Ok(client)
 }
 
 static RUNTIME: LazyLock<Result<tokio::runtime::Runtime, String>> = LazyLock::new(|| {

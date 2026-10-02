@@ -14,7 +14,7 @@ use vela_core::{
 const USER_FIELDS: &str = "id,login,fullName,guest";
 const ISSUE_FIELDS: &str = "id,idReadable,summary,resolved";
 const USER_REF_FIELDS: &str = "id,login,fullName";
-const ISSUE_DETAIL_FIELDS: &str = "id,idReadable,summary,description,created,updated,resolved,project(id,shortName,name,archived),customFields(id,name,$type,value(id,name,localizedName,login,fullName,text,presentation,isResolved,$type),possibleEvents(id,presentation))";
+const ISSUE_DETAIL_FIELDS: &str = "id,idReadable,summary,description,created,updated,resolved,project(id,shortName,name,archived),customFields(id,name,$type,value(id,name,localizedName,login,fullName,text,presentation,isResolved,$type))";
 const ISSUE_LINK_FIELDS: &str = "id,direction,linkType(id,name,sourceToTarget,targetToSource,directed,aggregation,readOnly),issues(id,idReadable,summary,resolved)";
 const ISSUE_CUSTOM_FIELD_FIELDS: &str = "id,name,$type,value(id,name,localizedName,login,fullName,text,presentation,isResolved,$type),possibleEvents(id,presentation)";
 const PROJECT_FIELDS: &str = "id,shortName,name,archived";
@@ -122,6 +122,16 @@ impl Client {
     pub async fn issue_links(&self, issue_id: &str) -> Result<Vec<IssueLink>, Error> {
         let path = format!("issues/{issue_id}/links");
         let raw: Vec<RawIssueLink> = self.get_all(&path, ISSUE_LINK_FIELDS).await?;
+
+        Ok(raw.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn issue_custom_fields(
+        &self,
+        issue_id: &str,
+    ) -> Result<Vec<CustomFieldValue>, Error> {
+        let path = format!("issues/{issue_id}/customFields");
+        let raw: Vec<RawCustomField> = self.get_all(&path, ISSUE_CUSTOM_FIELD_FIELDS).await?;
 
         Ok(raw.into_iter().map(Into::into).collect())
     }

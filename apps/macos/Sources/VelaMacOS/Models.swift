@@ -321,6 +321,13 @@ struct IssueDetails: Decodable {
 struct IssueEnrichment: Decodable {
   let schema: ProjectSchema
   let links: [IssueLink]
+  let customFields: [CustomFieldValue]
+
+  private enum CodingKeys: String, CodingKey {
+    case schema
+    case links
+    case customFields = "custom_fields"
+  }
 }
 
 struct IssueReference: Decodable {

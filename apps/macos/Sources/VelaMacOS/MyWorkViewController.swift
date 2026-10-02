@@ -193,6 +193,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
       serviceURL: connectedServiceURL,
       bearerToken: connectedBearerToken,
       issueID: issue.id,
+      preview: issue,
       onBack: { [weak self] in
         self?.hideInspector()
       },

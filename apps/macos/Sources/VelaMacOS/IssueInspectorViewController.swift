@@ -4,6 +4,7 @@ final class IssueInspectorViewController: NSViewController {
   private let serviceURL: String
   private let bearerToken: String
   private let issueID: String
+  private let preview: MyWorkIssue?
   private let onBack: () -> Void
   private let onIssueChanged: (IssueDetails) -> Void
 
@@ -20,6 +21,7 @@ final class IssueInspectorViewController: NSViewController {
   private var details: IssueDetails?
   private var schema: ProjectSchema?
   private var links: [IssueLink] = []
+  private var enrichedFields: [CustomFieldValue]?
   private var loaded = false
   private var enrichmentLoaded = false
   private var saving = false
@@ -28,12 +30,14 @@ final class IssueInspectorViewController: NSViewController {
     serviceURL: String,
     bearerToken: String,
     issueID: String,
+    preview: MyWorkIssue? = nil,
     onBack: @escaping () -> Void,
     onIssueChanged: @escaping (IssueDetails) -> Void
   ) {
     self.serviceURL = serviceURL
     self.bearerToken = bearerToken
     self.issueID = issueID
+    self.preview = preview
     self.onBack = onBack
     self.onIssueChanged = onIssueChanged
     super.init(nibName: nil, bundle: nil)
@@ -158,6 +162,15 @@ final class IssueInspectorViewController: NSViewController {
     ])
 
     view = root
+
+    if let preview {
+      idLabel.stringValue = preview.idReadable
+      summaryField.stringValue = preview.summary
+      projectLabel.stringValue = "Loading…"
+      descriptionTextView.string = ""
+      renderFields()
+      renderLinks()
+    }
   }
 
   override func viewDidAppear() {
@@ -192,6 +205,7 @@ final class IssueInspectorViewController: NSViewController {
           self.details = issue
           self.schema = nil
           self.links = []
+          self.enrichedFields = nil
           self.render()
           self.setBusy(false)
         }
@@ -206,6 +220,7 @@ final class IssueInspectorViewController: NSViewController {
         DispatchQueue.main.async {
           self.schema = enrichment.schema
           self.links = enrichment.links
+          self.enrichedFields = enrichment.customFields
           self.enrichmentLoaded = true
           self.renderFields()
           self.renderLinks()
@@ -240,7 +255,8 @@ final class IssueInspectorViewController: NSViewController {
       return
     }
 
-    let sorted = details.customFields.sorted {
+    let fields = enrichedFields ?? details.customFields
+    let sorted = fields.sorted {
       semanticRank($0) < semanticRank($1)
     }
 
@@ -589,6 +605,7 @@ final class IssueInspectorViewController: NSViewController {
 
   private func replaceDetails(_ updated: IssueDetails) {
     details = updated
+    enrichedFields = nil
     render()
     onIssueChanged(updated)
   }
@@ -615,6 +632,12 @@ final class IssueInspectorViewController: NSViewController {
     )
 
     self.details = next
+    if var enrichedFields,
+      let index = enrichedFields.firstIndex(where: { $0.id == updated.id })
+    {
+      enrichedFields[index] = updated
+      self.enrichedFields = enrichedFields
+    }
     renderFields()
     onIssueChanged(next)
   }
