@@ -28,6 +28,7 @@ final class IssueInspectorViewController: NSViewController {
   private var loaded = false
   private var enrichmentLoaded = false
   private var saving = false
+  private var localMutationRevision = 0
 
   init(
     serviceURL: String,
@@ -198,6 +199,7 @@ final class IssueInspectorViewController: NSViewController {
 
   private func loadIssue() {
     let blocksInteraction = details == nil
+    let refreshRevision = localMutationRevision
     if blocksInteraction {
       setBusy(true)
     }
@@ -218,6 +220,13 @@ final class IssueInspectorViewController: NSViewController {
           issueID: self.issueID
         )
         DispatchQueue.main.async {
+          guard self.localMutationRevision == refreshRevision else {
+            if blocksInteraction {
+              self.setBusy(false)
+            }
+            return
+          }
+
           let previousDetails = self.details
           let preserveSummaryDraft =
             previousDetails.map { self.summaryField.stringValue != $0.summary } ?? false
@@ -248,7 +257,9 @@ final class IssueInspectorViewController: NSViewController {
         DispatchQueue.main.async {
           self.schema = enrichment.schema
           self.links = enrichment.links
-          self.enrichedFields = enrichment.customFields
+          if self.localMutationRevision == refreshRevision {
+            self.enrichedFields = enrichment.customFields
+          }
           self.enrichmentLoaded = true
           self.renderFields()
           self.renderLinks()
@@ -622,6 +633,7 @@ final class IssueInspectorViewController: NSViewController {
     operation: @escaping () throws -> Value,
     apply: @escaping (Value) -> Void
   ) {
+    localMutationRevision += 1
     saving = true
     setControlsEnabled(false)
     errorLabel.isHidden = true
