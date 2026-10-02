@@ -660,10 +660,40 @@ final class IssueInspectorViewController: NSViewController {
   }
 
   private func replaceDetails(_ updated: IssueDetails) {
-    details = updated
-    enrichedFields = nil
+    let mergedFields = updated.customFields.map { latest in
+      guard
+        let enriched = enrichedFields?.first(where: { $0.id == latest.id })
+      else {
+        return latest
+      }
+
+      return CustomFieldValue(
+        id: latest.id,
+        name: latest.name,
+        fieldType: latest.fieldType,
+        value: latest.value,
+        possibleEvents: enriched.possibleEvents
+      )
+    }
+
+    let merged = IssueDetails(
+      id: updated.id,
+      idReadable: updated.idReadable,
+      summary: updated.summary,
+      description: updated.description,
+      createdAt: updated.createdAt,
+      updatedAt: updated.updatedAt,
+      resolvedAt: updated.resolvedAt,
+      project: updated.project,
+      customFields: mergedFields
+    )
+
+    details = merged
+    if enrichedFields != nil {
+      enrichedFields = mergedFields
+    }
     render()
-    onIssueChanged(updated)
+    onIssueChanged(merged)
   }
 
   private func replaceField(_ updated: CustomFieldValue) {
