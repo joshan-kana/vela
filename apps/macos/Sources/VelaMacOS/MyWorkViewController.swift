@@ -1,6 +1,11 @@
 import AppKit
 
-final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
+final class MyWorkViewController:
+  NSViewController,
+  NSTableViewDataSource,
+  NSTableViewDelegate,
+  NSSearchFieldDelegate
+{
   private let titleLabel = NSTextField(labelWithString: "My Work")
   private let serviceURLField = NSTextField()
   private let oauthClientIDField = NSTextField()
@@ -20,9 +25,12 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   private let connectionStack = NSStackView()
   private let savedAccountsStack = NSStackView()
   private let accountStack = NSStackView()
+  private let workControlsStack = NSStackView()
+  private let searchField = NSSearchField()
+  private let actionErrorLabel = NSTextField(wrappingLabelWithString: "")
   private let newIssueButton = NSButton(title: "New issue", target: nil, action: nil)
   private let disconnectButton = NSButton(title: "Disconnect", target: nil, action: nil)
-  private let tableView = NSTableView()
+  private let tableView = ShortcutTableView()
   private let scrollView = NSScrollView()
 
   private var issues: [MyWorkIssue] = []
@@ -31,10 +39,25 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   private var inspector: IssueInspectorViewController?
   private var quickCreate: QuickCreateViewController?
   private var oauthLoopbackServer: OAuthLoopbackServer?
+  private var commandPalette: CommandPaletteViewController?
+  private var keyMonitor: Any?
+  private var actionBusy = false
   private var prefetchedIssueDetails: [String: IssueDetails] = [:]
   private var prefetchedProjectSchemas: [String: ProjectSchema] = [:]
   private var prefetchGeneration = UUID()
   private var prefetchProtectedIssueIDs: Set<String> = []
+
+  private var filteredIssues: [MyWorkIssue] {
+    let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !query.isEmpty else {
+      return issues
+    }
+
+    return issues.filter {
+      $0.idReadable.localizedCaseInsensitiveContains(query)
+        || $0.summary.localizedCaseInsensitiveContains(query)
+    }
+  }
 
   override func loadView() {
     let root = NSView()
@@ -127,12 +150,33 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     accountStack.spacing = 2
     accountStack.isHidden = true
 
+    searchField.placeholderString = "Search My Work"
+    searchField.setAccessibilityLabel("Search My Work")
+    searchField.delegate = self
+
+    actionErrorLabel.textColor = .systemRed
+    actionErrorLabel.maximumNumberOfLines = 2
+    actionErrorLabel.isHidden = true
+
+    workControlsStack.setViews([searchField, actionErrorLabel], in: .top)
+    workControlsStack.orientation = .vertical
+    workControlsStack.alignment = .leading
+    workControlsStack.spacing = 4
+    workControlsStack.isHidden = true
+    searchField.widthAnchor.constraint(equalToConstant: 360).isActive = true
+    actionErrorLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 360).isActive = true
+
     tableView.headerView = nil
     tableView.rowHeight = 42
     tableView.intercellSpacing = NSSize(width: 0, height: 0)
     tableView.usesAlternatingRowBackgroundColors = false
     tableView.delegate = self
     tableView.dataSource = self
+    tableView.target = self
+    tableView.doubleAction = #selector(openSelectedIssue)
+    tableView.handleKeyDown = { [weak self] event in
+      self?.handleTableKeyEvent(event) ?? false
+    }
 
     let issueColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("issue"))
     issueColumn.resizingMask = .autoresizingMask
@@ -143,7 +187,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     scrollView.drawsBackground = false
     scrollView.isHidden = true
 
-    for subview in [titleLabel, connectionStack, accountStack, scrollView] {
+    for subview in [titleLabel, connectionStack, accountStack, workControlsStack, scrollView] {
       subview.translatesAutoresizingMaskIntoConstraints = false
       root.addSubview(subview)
     }
@@ -158,9 +202,12 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
       accountStack.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
       accountStack.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 22),
 
+      workControlsStack.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+      workControlsStack.topAnchor.constraint(equalTo: accountStack.bottomAnchor, constant: 12),
+
       scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 28),
       scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -28),
-      scrollView.topAnchor.constraint(equalTo: accountStack.bottomAnchor, constant: 14),
+      scrollView.topAnchor.constraint(equalTo: workControlsStack.bottomAnchor, constant: 8),
       scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
     ])
 
@@ -168,8 +215,23 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     refreshSavedAccounts(autoConnect: true)
   }
 
+  override func viewDidAppear() {
+    super.viewDidAppear()
+
+    guard keyMonitor == nil else {
+      return
+    }
+
+    keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+      self?.handleKeyEvent(event) ?? event
+    }
+  }
+
   deinit {
     oauthLoopbackServer?.stop()
+    if let keyMonitor {
+      NSEvent.removeMonitor(keyMonitor)
+    }
   }
 
   @objc private func connectOAuth() {
@@ -406,10 +468,12 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
       work.user.login + (work.user.guest ? " · Guest access" : "")
 
     accountStack.isHidden = false
+    workControlsStack.isHidden = false
     connectionStack.isHidden = true
     scrollView.isHidden = false
     tableView.reloadData()
     prefetchMyWork()
+    view.window?.makeFirstResponder(tableView)
   }
 
   private func prefetchMyWork() {
@@ -565,6 +629,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   @objc private func disconnect() {
     hideInspector()
     hideQuickCreate()
+    hideCommandPalette()
     issues = []
     connectedServiceURL = ""
     connectedAccountID = nil
@@ -574,23 +639,35 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     prefetchedProjectSchemas.removeAll()
     UserDefaults.standard.removeObject(forKey: Self.lastConnectedAccountIDKey)
     accountStack.isHidden = true
+    workControlsStack.isHidden = true
+    searchField.stringValue = ""
+    actionErrorLabel.isHidden = true
     scrollView.isHidden = true
     connectionStack.isHidden = false
     tableView.reloadData()
     refreshSavedAccounts()
   }
 
-  func tableViewSelectionDidChange(_ notification: Notification) {
-    let row = tableView.selectedRow
-    guard issues.indices.contains(row) else {
+  func controlTextDidChange(_ notification: Notification) {
+    guard notification.object as? NSSearchField === searchField else {
       return
     }
 
-    showInspector(for: issues[row])
+    tableView.reloadData()
+    tableView.deselectAll(nil)
   }
 
-  private func showInspector(for issue: MyWorkIssue) {
+  @objc private func openSelectedIssue() {
+    guard let issue = selectedIssue else {
+      return
+    }
+
     showInspector(issueID: issue.id, preview: issue)
+  }
+
+  private var selectedIssue: MyWorkIssue? {
+    let row = tableView.selectedRow
+    return filteredIssues.indices.contains(row) ? filteredIssues[row] : nil
   }
 
   private func showInspector(
@@ -598,7 +675,8 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     preview: MyWorkIssue? = nil,
     prefetchedDetails explicitDetails: IssueDetails? = nil
   ) {
-    guard inspector == nil, quickCreate == nil, !connectedServiceURL.isEmpty else {
+    guard inspector == nil, quickCreate == nil, commandPalette == nil, !connectedServiceURL.isEmpty
+    else {
       return
     }
 
@@ -624,6 +702,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
       }
     )
 
+    setPrimaryContentHidden(true)
     addChild(inspector)
     inspector.view.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(inspector.view)
@@ -639,7 +718,8 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   }
 
   @objc private func showQuickCreate() {
-    guard quickCreate == nil, inspector == nil, !connectedServiceURL.isEmpty else {
+    guard quickCreate == nil, inspector == nil, commandPalette == nil, !connectedServiceURL.isEmpty
+    else {
       return
     }
 
@@ -660,6 +740,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
       }
     )
 
+    setPrimaryContentHidden(true)
     addChild(quickCreate)
     quickCreate.view.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(quickCreate.view)
@@ -682,6 +763,229 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     quickCreate.view.removeFromSuperview()
     quickCreate.removeFromParent()
     self.quickCreate = nil
+    setPrimaryContentHidden(false)
+  }
+
+  private func handleKeyEvent(_ event: NSEvent) -> NSEvent? {
+    guard view.window?.isKeyWindow == true else {
+      return event
+    }
+
+    let shortcutModifiers: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+    let modifiers = event.modifierFlags.intersection(shortcutModifiers)
+    let characters = event.charactersIgnoringModifiers?.lowercased() ?? ""
+
+    guard inspector == nil, quickCreate == nil, commandPalette == nil else {
+      return event
+    }
+
+    if modifiers == .command, characters == "k" {
+      showCommandPalette()
+      return nil
+    }
+
+    if view.window?.firstResponder is NSTextView {
+      return event
+    }
+
+    if let firstResponder = view.window?.firstResponder as? NSView,
+      firstResponder === tableView || firstResponder.isDescendant(of: tableView)
+    {
+      return event
+    }
+
+    guard modifiers.isEmpty else {
+      return event
+    }
+
+    return handleUnmodifiedShortcut(characters) ? nil : event
+  }
+
+  private func handleTableKeyEvent(_ event: NSEvent) -> Bool {
+    let shortcutModifiers: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+    guard event.modifierFlags.intersection(shortcutModifiers).isEmpty else {
+      return false
+    }
+
+    return handleUnmodifiedShortcut(event.charactersIgnoringModifiers?.lowercased() ?? "")
+  }
+
+  private func handleUnmodifiedShortcut(_ characters: String) -> Bool {
+    switch characters {
+    case "j":
+      moveSelection(by: 1)
+    case "k":
+      moveSelection(by: -1)
+    case "e":
+      resolveSelectedIssue()
+    case "c":
+      showQuickCreate()
+    case "/":
+      focusSearch()
+    case "\r", "\n":
+      openSelectedIssue()
+    default:
+      return false
+    }
+
+    return true
+  }
+
+  private func moveSelection(by offset: Int) {
+    let count = filteredIssues.count
+    guard count > 0 else {
+      return
+    }
+
+    let current = tableView.selectedRow
+    let next: Int
+    if current < 0 {
+      next = offset >= 0 ? 0 : count - 1
+    } else {
+      next = min(max(0, current + offset), count - 1)
+    }
+
+    tableView.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
+    tableView.scrollRowToVisible(next)
+  }
+
+  private func focusSearch() {
+    view.window?.makeFirstResponder(searchField)
+  }
+
+  private func resolveSelectedIssue() {
+    guard !actionBusy, let issue = selectedIssue, !connectedServiceURL.isEmpty else {
+      return
+    }
+
+    let cachedDetails = prefetchedIssueDetails[issue.id]
+    let cachedSchema = cachedDetails.flatMap { prefetchedProjectSchemas[$0.project.id] }
+
+    actionBusy = true
+    tableView.isEnabled = false
+    actionErrorLabel.isHidden = true
+
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      guard let self else {
+        return
+      }
+
+      do {
+        let bearerToken =
+          try self.connectedAccountID.map { try SecureAccountStore.bearerToken(for: $0) } ?? ""
+
+        let details: IssueDetails
+        if let cachedDetails {
+          details = cachedDetails
+        } else {
+          details = try RustBridge.loadIssueDetails(
+            serviceURL: self.connectedServiceURL,
+            bearerToken: bearerToken,
+            issueID: issue.id
+          )
+        }
+
+        let schema: ProjectSchema
+        if let cachedSchema {
+          schema = cachedSchema
+        } else {
+          schema = try RustBridge.loadProjectSchema(
+            serviceURL: self.connectedServiceURL,
+            bearerToken: bearerToken,
+            projectID: details.project.id
+          )
+        }
+        let action = try IssueActionResolver.resolveAction(issue: details, schema: schema)
+        let result = try RustBridge.executeIssueAction(
+          serviceURL: self.connectedServiceURL,
+          bearerToken: bearerToken,
+          action: action
+        )
+
+        guard result.kind == "issue", let updated = result.issue else {
+          throw IssueActionResolverError.resolvedTransitionUnavailable
+        }
+
+        DispatchQueue.main.async {
+          self.actionBusy = false
+          self.tableView.isEnabled = true
+          self.updateIssueList(updated)
+        }
+      } catch {
+        DispatchQueue.main.async {
+          self.actionBusy = false
+          self.tableView.isEnabled = true
+          self.actionErrorLabel.stringValue = error.localizedDescription
+          self.actionErrorLabel.isHidden = false
+        }
+      }
+    }
+  }
+
+  private func showCommandPalette() {
+    guard
+      commandPalette == nil,
+      inspector == nil,
+      quickCreate == nil,
+      !connectedServiceURL.isEmpty
+    else {
+      return
+    }
+
+    var commands: [CommandPaletteCommand] = [.createIssue, .searchMyWork]
+    if selectedIssue != nil {
+      commands.insert(.openIssue, at: 1)
+      commands.insert(.resolveIssue, at: 2)
+    }
+
+    let palette = CommandPaletteViewController(
+      commands: commands,
+      onSelect: { [weak self] command in
+        guard let self else {
+          return
+        }
+
+        self.hideCommandPalette()
+        switch command {
+        case .createIssue:
+          self.showQuickCreate()
+        case .openIssue:
+          self.openSelectedIssue()
+        case .resolveIssue:
+          self.resolveSelectedIssue()
+        case .searchMyWork:
+          self.focusSearch()
+        }
+      },
+      onCancel: { [weak self] in
+        self?.hideCommandPalette()
+      }
+    )
+
+    setPrimaryContentHidden(true)
+    addChild(palette)
+    palette.view.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(palette.view)
+
+    NSLayoutConstraint.activate([
+      palette.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      palette.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      palette.view.topAnchor.constraint(equalTo: view.topAnchor),
+      palette.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+    ])
+
+    commandPalette = palette
+  }
+
+  private func hideCommandPalette() {
+    guard let commandPalette else {
+      return
+    }
+
+    commandPalette.view.removeFromSuperview()
+    commandPalette.removeFromParent()
+    self.commandPalette = nil
+    setPrimaryContentHidden(false)
   }
 
   private func hideInspector() {
@@ -692,7 +996,27 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     inspector.view.removeFromSuperview()
     inspector.removeFromParent()
     self.inspector = nil
+    setPrimaryContentHidden(false)
     tableView.deselectAll(nil)
+    view.window?.makeFirstResponder(tableView)
+  }
+
+  private func setPrimaryContentHidden(_ hidden: Bool) {
+    titleLabel.isHidden = hidden
+
+    if hidden {
+      connectionStack.isHidden = true
+      accountStack.isHidden = true
+      workControlsStack.isHidden = true
+      scrollView.isHidden = true
+      return
+    }
+
+    let connected = !connectedServiceURL.isEmpty
+    connectionStack.isHidden = connected
+    accountStack.isHidden = !connected
+    workControlsStack.isHidden = !connected
+    scrollView.isHidden = !connected
   }
 
   private func updateIssueList(_ updated: IssueDetails) {
@@ -719,7 +1043,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   }
 
   func numberOfRows(in tableView: NSTableView) -> Int {
-    issues.count
+    filteredIssues.count
   }
 
   func tableView(
@@ -727,7 +1051,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     viewFor tableColumn: NSTableColumn?,
     row: Int
   ) -> NSView? {
-    let issue = issues[row]
+    let issue = filteredIssues[row]
     let identifier = NSUserInterfaceItemIdentifier("issueCell")
 
     let field: NSTextField
@@ -764,6 +1088,18 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   }
   private static let lastConnectedAccountIDKey = "last_connected_account_id"
   private static let defaultOAuthScope = "YouTrack"
+}
+
+private final class ShortcutTableView: NSTableView {
+  var handleKeyDown: ((NSEvent) -> Bool)?
+
+  override func keyDown(with event: NSEvent) {
+    if handleKeyDown?(event) == true {
+      return
+    }
+
+    super.keyDown(with: event)
+  }
 }
 
 private final class AccountActionButton: NSButton {
