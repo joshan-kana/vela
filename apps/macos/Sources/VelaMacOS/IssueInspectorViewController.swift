@@ -5,6 +5,8 @@ final class IssueInspectorViewController: NSViewController {
   private let accountID: String?
   private let issueID: String
   private let preview: MyWorkIssue?
+  private let prefetchedDetails: IssueDetails?
+  private let prefetchedSchema: ProjectSchema?
   private let onBack: () -> Void
   private let onIssueChanged: (IssueDetails) -> Void
 
@@ -31,6 +33,8 @@ final class IssueInspectorViewController: NSViewController {
     accountID: String?,
     issueID: String,
     preview: MyWorkIssue? = nil,
+    prefetchedDetails: IssueDetails? = nil,
+    prefetchedSchema: ProjectSchema? = nil,
     onBack: @escaping () -> Void,
     onIssueChanged: @escaping (IssueDetails) -> Void
   ) {
@@ -38,6 +42,8 @@ final class IssueInspectorViewController: NSViewController {
     self.accountID = accountID
     self.issueID = issueID
     self.preview = preview
+    self.prefetchedDetails = prefetchedDetails
+    self.prefetchedSchema = prefetchedSchema
     self.onBack = onBack
     self.onIssueChanged = onIssueChanged
     super.init(nibName: nil, bundle: nil)
@@ -163,7 +169,12 @@ final class IssueInspectorViewController: NSViewController {
 
     view = root
 
-    if let preview {
+    if let prefetchedDetails {
+      details = prefetchedDetails
+      schema = prefetchedSchema
+      enrichedFields = prefetchedDetails.customFields
+      render()
+    } else if let preview {
       idLabel.stringValue = preview.idReadable
       summaryField.stringValue = preview.summary
       projectLabel.stringValue = "Loading…"
@@ -203,9 +214,7 @@ final class IssueInspectorViewController: NSViewController {
         )
         DispatchQueue.main.async {
           self.details = issue
-          self.schema = nil
           self.links = []
-          self.enrichedFields = nil
           self.render()
           self.setBusy(false)
         }

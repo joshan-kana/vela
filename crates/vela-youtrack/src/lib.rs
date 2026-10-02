@@ -20,6 +20,7 @@ const USER_FIELDS: &str = "id,login,fullName,guest";
 const ISSUE_FIELDS: &str = "id,idReadable,summary,resolved";
 const USER_REF_FIELDS: &str = "id,login,fullName";
 const ISSUE_DETAIL_FIELDS: &str = "id,idReadable,summary,description,created,updated,resolved,project(id,shortName,name,archived),customFields(id,name,$type,value(id,name,localizedName,login,fullName,text,presentation,isResolved,$type))";
+const ISSUE_PREFETCH_FIELDS: &str = "id,idReadable,summary,description,created,updated,resolved,project(id,shortName,name,archived),customFields(id,name,$type,value(id,name,localizedName,login,fullName,text,presentation,isResolved,$type),possibleEvents(id,presentation))";
 const ISSUE_LINK_FIELDS: &str = "id,direction,linkType(id,name,sourceToTarget,targetToSource,directed,aggregation,readOnly),issues(id,idReadable,summary,resolved)";
 const ISSUE_CUSTOM_FIELD_FIELDS: &str = "id,name,$type,value(id,name,localizedName,login,fullName,text,presentation,isResolved,$type),possibleEvents(id,presentation)";
 const PROJECT_FIELDS: &str = "id,shortName,name,archived";
@@ -122,6 +123,24 @@ impl Client {
             .await?;
 
         Ok(raw.into())
+    }
+
+    pub async fn issue_details_list(
+        &self,
+        query: Option<&str>,
+        top: usize,
+    ) -> Result<Vec<IssueDetails>, Error> {
+        let mut params = vec![
+            ("fields", ISSUE_PREFETCH_FIELDS.to_owned()),
+            ("$top", top.to_string()),
+        ];
+
+        if let Some(query) = query {
+            params.push(("query", query.to_owned()));
+        }
+
+        let raw: Vec<RawIssueDetails> = self.get("issues", &params).await?;
+        Ok(raw.into_iter().map(Into::into).collect())
     }
 
     pub async fn issue_links(&self, issue_id: &str) -> Result<Vec<IssueLink>, Error> {

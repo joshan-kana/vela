@@ -467,6 +467,24 @@ enum RustBridge {
     return try decode(result, fallbackMessage: "Unable to apply the field transition.")
   }
 
+  static func prefetchMyWork(
+    serviceURL: String,
+    bearerToken: String,
+    top: Int = 20
+  ) throws -> MyWorkPrefetch {
+    let result: UnsafeMutablePointer<CChar>? = serviceURL.withCString { serviceURLPointer in
+      if bearerToken.isEmpty {
+        vela_prefetch_my_work_json(serviceURLPointer, nil, top)
+      } else {
+        bearerToken.withCString { tokenPointer in
+          vela_prefetch_my_work_json(serviceURLPointer, tokenPointer, top)
+        }
+      }
+    }
+
+    return try decode(result, fallbackMessage: "Unable to prefetch My Work.")
+  }
+
   static func loadMyWork(
     serviceURL: String,
     bearerToken: String,

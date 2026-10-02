@@ -31,6 +31,9 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   private var inspector: IssueInspectorViewController?
   private var quickCreate: QuickCreateViewController?
   private var oauthLoopbackServer: OAuthLoopbackServer?
+  private var prefetchedIssueDetails: [String: IssueDetails] = [:]
+  private var prefetchedProjectSchemas: [String: ProjectSchema] = [:]
+  private var prefetchGeneration = UUID()
 
   override func loadView() {
     let root = NSView()
@@ -381,8 +384,17 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     setConnecting(false)
     tokenField.stringValue = ""
 
+    let connectionChanged =
+      connectedServiceURL != serviceURL
+      || connectedAccountID != accountID
+
     connectedServiceURL = serviceURL
     connectedAccountID = accountID
+
+    if connectionChanged {
+      prefetchedIssueDetails.removeAll()
+      prefetchedProjectSchemas.removeAll()
+    }
 
     if let accountID {
       UserDefaults.standard.set(accountID, forKey: Self.lastConnectedAccountIDKey)
@@ -396,6 +408,48 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     connectionStack.isHidden = true
     scrollView.isHidden = false
     tableView.reloadData()
+    prefetchMyWork()
+  }
+
+  private func prefetchMyWork() {
+    let serviceURL = connectedServiceURL
+    let accountID = connectedAccountID
+    let generation = UUID()
+    prefetchGeneration = generation
+
+    DispatchQueue.global(qos: .utility).async { [weak self] in
+      guard let self else {
+        return
+      }
+
+      do {
+        let bearerToken =
+          try accountID.map { try SecureAccountStore.bearerToken(for: $0) } ?? ""
+        let prefetch = try RustBridge.prefetchMyWork(
+          serviceURL: serviceURL,
+          bearerToken: bearerToken
+        )
+
+        DispatchQueue.main.async {
+          guard
+            self.prefetchGeneration == generation,
+            self.connectedServiceURL == serviceURL,
+            self.connectedAccountID == accountID
+          else {
+            return
+          }
+
+          for issue in prefetch.issues {
+            self.prefetchedIssueDetails[issue.id] = issue
+          }
+          for schema in prefetch.schemas {
+            self.prefetchedProjectSchemas[schema.project.id] = schema
+          }
+        }
+      } catch {
+        // Prefetch is opportunistic. The inspector still has its normal live-fetch path.
+      }
+    }
   }
 
   private func show(error: Error) {
@@ -511,6 +565,9 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     issues = []
     connectedServiceURL = ""
     connectedAccountID = nil
+    prefetchGeneration = UUID()
+    prefetchedIssueDetails.removeAll()
+    prefetchedProjectSchemas.removeAll()
     UserDefaults.standard.removeObject(forKey: Self.lastConnectedAccountIDKey)
     accountStack.isHidden = true
     scrollView.isHidden = true
@@ -532,9 +589,20 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     showInspector(issueID: issue.id, preview: issue)
   }
 
-  private func showInspector(issueID: String, preview: MyWorkIssue? = nil) {
+  private func showInspector(
+    issueID: String,
+    preview: MyWorkIssue? = nil,
+    prefetchedDetails explicitDetails: IssueDetails? = nil
+  ) {
     guard inspector == nil, quickCreate == nil, !connectedServiceURL.isEmpty else {
       return
+    }
+
+    let cachedDetails = explicitDetails ?? prefetchedIssueDetails[issueID]
+    let cachedSchema = cachedDetails.flatMap { prefetchedProjectSchemas[$0.project.id] }
+
+    if let cachedDetails {
+      prefetchedIssueDetails[issueID] = cachedDetails
     }
 
     let inspector = IssueInspectorViewController(
@@ -542,6 +610,8 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
       accountID: connectedAccountID,
       issueID: issueID,
       preview: preview,
+      prefetchedDetails: cachedDetails,
+      prefetchedSchema: cachedSchema,
       onBack: { [weak self] in
         self?.hideInspector()
       },
@@ -576,8 +646,13 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
         self?.hideQuickCreate()
       },
       onCreated: { [weak self] issue in
-        self?.hideQuickCreate()
-        self?.showInspector(issueID: issue.id)
+        guard let self else {
+          return
+        }
+
+        self.prefetchedIssueDetails[issue.id] = issue
+        self.hideQuickCreate()
+        self.showInspector(issueID: issue.id, prefetchedDetails: issue)
       }
     )
 

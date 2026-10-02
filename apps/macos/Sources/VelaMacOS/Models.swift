@@ -35,6 +35,11 @@ struct MyWork: Decodable {
   let issues: [MyWorkIssue]
 }
 
+struct MyWorkPrefetch: Decodable {
+  let issues: [IssueDetails]
+  let schemas: [ProjectSchema]
+}
+
 struct BridgeResponse<Value: Decodable>: Decodable {
   let status: String
   let data: Value?

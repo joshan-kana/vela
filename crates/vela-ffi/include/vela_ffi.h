@@ -11,6 +11,10 @@ char *vela_load_my_work_json(
     const char *service_url,
     const char *bearer_token,
     size_t top);
+char *vela_prefetch_my_work_json(
+    const char *service_url,
+    const char *bearer_token,
+    size_t top);
 char *vela_discover_json(
     const char *service_url,
     const char *bearer_token);

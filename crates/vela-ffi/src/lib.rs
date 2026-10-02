@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{LazyLock, Mutex};
@@ -24,6 +24,12 @@ struct MyWork {
 }
 
 #[derive(Serialize)]
+struct MyWorkPrefetch {
+    issues: Vec<IssueDetails>,
+    schemas: Vec<ProjectSchema>,
+}
+
+#[derive(Serialize)]
 struct IssueEnrichment {
     schema: ProjectSchema,
     links: Vec<IssueLink>,
@@ -41,6 +47,20 @@ pub extern "C" fn vela_load_my_work_json(
         let bearer_token = read_optional_string(bearer_token)?;
 
         load_my_work(&service_url, bearer_token.as_deref(), top)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_prefetch_my_work_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+    top: usize,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+
+        load_my_work_prefetch(&service_url, bearer_token.as_deref(), top)
     })
 }
 
@@ -621,6 +641,49 @@ fn apply_custom_field_event(
             .apply_custom_field_event(issue_id, field_id, field_type, event_id)
             .await
             .map_err(|error| error.to_string())
+    })
+}
+
+fn load_my_work_prefetch(
+    service_url: &str,
+    bearer_token: Option<&str>,
+    top: usize,
+) -> Result<MyWorkPrefetch, String> {
+    let client = client(service_url, bearer_token)?;
+    let runtime = runtime()?;
+
+    runtime.block_on(async {
+        let issues = client
+            .issue_details_list(Some("for: me #Unresolved"), top)
+            .await
+            .map_err(|error| error.to_string())?;
+
+        let project_ids: HashSet<String> = issues
+            .iter()
+            .map(|issue| issue.project.id.clone())
+            .collect();
+
+        let mut tasks = tokio::task::JoinSet::new();
+        for project_id in project_ids {
+            let client = client.clone();
+            tasks.spawn(async move {
+                client
+                    .project_schema(&project_id)
+                    .await
+                    .map_err(|error| error.to_string())
+            });
+        }
+
+        let mut schemas = Vec::new();
+        while let Some(result) = tasks.join_next().await {
+            let schema =
+                result.map_err(|error| format!("project schema task failed: {error}"))??;
+            schemas.push(schema);
+        }
+
+        schemas.sort_by(|left, right| left.project.id.cmp(&right.project.id));
+
+        Ok(MyWorkPrefetch { issues, schemas })
     })
 }
 
