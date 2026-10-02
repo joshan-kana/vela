@@ -22,6 +22,12 @@ struct MyWork {
     issues: Vec<Issue>,
 }
 
+#[derive(Serialize)]
+struct IssueEnrichment {
+    schema: ProjectSchema,
+    links: Vec<IssueLink>,
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn vela_load_my_work_json(
     service_url: *const c_char,
@@ -121,6 +127,28 @@ pub extern "C" fn vela_issue_details_json(
         let issue_id = read_required_string(issue_id, "issue ID")?;
 
         load_issue_details(&service_url, bearer_token.as_deref(), &issue_id)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_issue_enrichment_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+    issue_id: *const c_char,
+    project_id: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+        let issue_id = read_required_string(issue_id, "issue ID")?;
+        let project_id = read_required_string(project_id, "project ID")?;
+
+        load_issue_enrichment(
+            &service_url,
+            bearer_token.as_deref(),
+            &issue_id,
+            &project_id,
+        )
     })
 }
 
@@ -345,6 +373,26 @@ fn load_issue_details(
     })
 }
 
+fn load_issue_enrichment(
+    service_url: &str,
+    bearer_token: Option<&str>,
+    issue_id: &str,
+    project_id: &str,
+) -> Result<IssueEnrichment, String> {
+    let client = client(service_url, bearer_token)?;
+    let runtime = runtime()?;
+
+    runtime.block_on(async {
+        let (schema, links) = tokio::try_join!(
+            client.project_schema(project_id),
+            client.issue_links(issue_id)
+        )
+        .map_err(|error| error.to_string())?;
+
+        Ok(IssueEnrichment { schema, links })
+    })
+}
+
 fn load_issue_links(
     service_url: &str,
     bearer_token: Option<&str>,
@@ -442,14 +490,11 @@ fn load_my_work(
     let runtime = runtime()?;
 
     runtime.block_on(async {
-        let user = client
-            .current_user()
-            .await
-            .map_err(|error| error.to_string())?;
-        let issues = client
-            .issues(Some("for: me #Unresolved"), top)
-            .await
-            .map_err(|error| error.to_string())?;
+        let (user, issues) = tokio::try_join!(
+            client.current_user(),
+            client.issues(Some("for: me #Unresolved"), top)
+        )
+        .map_err(|error| error.to_string())?;
 
         Ok(MyWork { user, issues })
     })

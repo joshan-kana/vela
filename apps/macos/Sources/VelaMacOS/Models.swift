@@ -318,6 +318,11 @@ struct IssueDetails: Decodable {
   }
 }
 
+struct IssueEnrichment: Decodable {
+  let schema: ProjectSchema
+  let links: [IssueLink]
+}
+
 struct IssueReference: Decodable {
   let id: String
   let idReadable: String

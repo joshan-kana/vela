@@ -21,6 +21,7 @@ final class IssueInspectorViewController: NSViewController {
   private var schema: ProjectSchema?
   private var links: [IssueLink] = []
   private var loaded = false
+  private var enrichmentLoaded = false
   private var saving = false
 
   init(
@@ -173,6 +174,7 @@ final class IssueInspectorViewController: NSViewController {
   private func loadIssue() {
     setBusy(true)
     errorLabel.isHidden = true
+    enrichmentLoaded = false
 
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       guard let self else {
@@ -185,15 +187,28 @@ final class IssueInspectorViewController: NSViewController {
           bearerToken: self.bearerToken,
           issueID: self.issueID
         )
-        let loadedSchema = try self.loadProjectSchema(projectID: issue.project.id)
-        let loadedLinks = try self.loadIssueLinks()
 
         DispatchQueue.main.async {
           self.details = issue
-          self.schema = loadedSchema
-          self.links = loadedLinks
+          self.schema = nil
+          self.links = []
           self.render()
           self.setBusy(false)
+        }
+
+        let enrichment = try RustBridge.loadIssueEnrichment(
+          serviceURL: self.serviceURL,
+          bearerToken: self.bearerToken,
+          issueID: self.issueID,
+          projectID: issue.project.id
+        )
+
+        DispatchQueue.main.async {
+          self.schema = enrichment.schema
+          self.links = enrichment.links
+          self.enrichmentLoaded = true
+          self.renderFields()
+          self.renderLinks()
         }
       } catch {
         DispatchQueue.main.async {
@@ -202,22 +217,6 @@ final class IssueInspectorViewController: NSViewController {
         }
       }
     }
-  }
-
-  private func loadProjectSchema(projectID: String) throws -> ProjectSchema {
-    try RustBridge.loadProjectSchema(
-      serviceURL: serviceURL,
-      bearerToken: bearerToken,
-      projectID: projectID
-    )
-  }
-
-  private func loadIssueLinks() throws -> [IssueLink] {
-    try RustBridge.loadIssueLinks(
-      serviceURL: serviceURL,
-      bearerToken: bearerToken,
-      issueID: issueID
-    )
   }
 
   private func render() {
@@ -261,6 +260,13 @@ final class IssueInspectorViewController: NSViewController {
 
   private func renderLinks() {
     removeArrangedSubviews(from: linksStack)
+
+    if !enrichmentLoaded {
+      let loading = NSTextField(labelWithString: "Loading…")
+      loading.textColor = .secondaryLabelColor
+      linksStack.addArrangedSubview(loading)
+      return
+    }
 
     let rows = links.flatMap { link in
       link.issues.map { (link, $0) }

@@ -141,6 +141,39 @@ enum RustBridge {
     return try decode(result, fallbackMessage: "Unable to load issue details.")
   }
 
+  static func loadIssueEnrichment(
+    serviceURL: String,
+    bearerToken: String,
+    issueID: String,
+    projectID: String
+  ) throws -> IssueEnrichment {
+    let result: UnsafeMutablePointer<CChar>? = serviceURL.withCString { serviceURLPointer in
+      issueID.withCString { issueIDPointer in
+        projectID.withCString { projectIDPointer in
+          if bearerToken.isEmpty {
+            vela_issue_enrichment_json(
+              serviceURLPointer,
+              nil,
+              issueIDPointer,
+              projectIDPointer
+            )
+          } else {
+            bearerToken.withCString { tokenPointer in
+              vela_issue_enrichment_json(
+                serviceURLPointer,
+                tokenPointer,
+                issueIDPointer,
+                projectIDPointer
+              )
+            }
+          }
+        }
+      }
+    }
+
+    return try decode(result, fallbackMessage: "Unable to enrich issue details.")
+  }
+
   static func loadIssueLinks(
     serviceURL: String,
     bearerToken: String,

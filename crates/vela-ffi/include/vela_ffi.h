@@ -37,6 +37,11 @@ char *vela_issue_details_json(
     const char *service_url,
     const char *bearer_token,
     const char *issue_id);
+char *vela_issue_enrichment_json(
+    const char *service_url,
+    const char *bearer_token,
+    const char *issue_id,
+    const char *project_id);
 char *vela_issue_links_json(
     const char *service_url,
     const char *bearer_token,
