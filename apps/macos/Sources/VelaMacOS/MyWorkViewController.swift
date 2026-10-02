@@ -3,21 +3,32 @@ import AppKit
 final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
   private let titleLabel = NSTextField(labelWithString: "My Work")
   private let serviceURLField = NSTextField()
+  private let oauthClientIDField = NSTextField()
+  private let oauthHubURLField = NSTextField()
+  private let oauthScopeField = NSTextField()
+  private let oauthConnectButton = NSButton(title: "Connect with OAuth", target: nil, action: nil)
   private let tokenField = NSSecureTextField()
-  private let connectButton = NSButton(title: "Connect", target: nil, action: nil)
+  private let connectButton = NSButton(
+    title: "Connect with token or guest access",
+    target: nil,
+    action: nil
+  )
   private let progress = NSProgressIndicator()
   private let errorLabel = NSTextField(wrappingLabelWithString: "")
   private let accountName = NSTextField(labelWithString: "")
   private let accountDetail = NSTextField(labelWithString: "")
   private let connectionStack = NSStackView()
+  private let savedAccountsStack = NSStackView()
   private let accountStack = NSStackView()
+  private let disconnectButton = NSButton(title: "Disconnect", target: nil, action: nil)
   private let tableView = NSTableView()
   private let scrollView = NSScrollView()
 
   private var issues: [MyWorkIssue] = []
   private var connectedServiceURL = ""
-  private var connectedBearerToken = ""
+  private var connectedAccountID: String?
   private var inspector: IssueInspectorViewController?
+  private var oauthLoopbackServer: OAuthLoopbackServer?
 
   override func loadView() {
     let root = NSView()
@@ -26,6 +37,18 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
 
     serviceURLField.placeholderString = "https://youtrack.example.com"
     serviceURLField.setAccessibilityLabel("YouTrack address")
+
+    oauthClientIDField.placeholderString = "OAuth client ID"
+    oauthClientIDField.setAccessibilityLabel("OAuth client ID")
+
+    oauthHubURLField.placeholderString = "Hub address override (optional)"
+    oauthHubURLField.setAccessibilityLabel("Hub address")
+
+    oauthScopeField.placeholderString = "OAuth scope override (optional)"
+    oauthScopeField.setAccessibilityLabel("OAuth scope")
+
+    oauthConnectButton.target = self
+    oauthConnectButton.action = #selector(connectOAuth)
 
     tokenField.placeholderString = "Permanent token (optional)"
     tokenField.setAccessibilityLabel("Permanent token")
@@ -42,8 +65,28 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     errorLabel.maximumNumberOfLines = 3
     errorLabel.isHidden = true
 
+    savedAccountsStack.orientation = .vertical
+    savedAccountsStack.alignment = .leading
+    savedAccountsStack.spacing = 6
+    savedAccountsStack.widthAnchor.constraint(equalToConstant: 360).isActive = true
+
+    let authDivider = NSTextField(labelWithString: "or")
+    authDivider.textColor = .secondaryLabelColor
+
     connectionStack.setViews(
-      [serviceURLField, tokenField, connectButton, progress, errorLabel],
+      [
+        savedAccountsStack,
+        serviceURLField,
+        oauthClientIDField,
+        oauthHubURLField,
+        oauthScopeField,
+        oauthConnectButton,
+        authDivider,
+        tokenField,
+        connectButton,
+        progress,
+        errorLabel,
+      ],
       in: .top
     )
     connectionStack.orientation = .vertical
@@ -51,13 +94,21 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     connectionStack.spacing = 10
 
     serviceURLField.widthAnchor.constraint(equalToConstant: 360).isActive = true
+    oauthClientIDField.widthAnchor.constraint(equalToConstant: 360).isActive = true
+    oauthHubURLField.widthAnchor.constraint(equalToConstant: 360).isActive = true
+    oauthScopeField.widthAnchor.constraint(equalToConstant: 360).isActive = true
+    oauthConnectButton.widthAnchor.constraint(equalToConstant: 220).isActive = true
     tokenField.widthAnchor.constraint(equalToConstant: 360).isActive = true
-    connectButton.widthAnchor.constraint(equalToConstant: 120).isActive = true
+    connectButton.widthAnchor.constraint(equalToConstant: 260).isActive = true
 
     accountName.font = .systemFont(ofSize: 14, weight: .semibold)
     accountDetail.textColor = .secondaryLabelColor
 
-    accountStack.setViews([accountName, accountDetail], in: .top)
+    disconnectButton.target = self
+    disconnectButton.action = #selector(disconnect)
+    disconnectButton.bezelStyle = .inline
+
+    accountStack.setViews([accountName, accountDetail, disconnectButton], in: .top)
     accountStack.orientation = .vertical
     accountStack.alignment = .leading
     accountStack.spacing = 2
@@ -101,6 +152,157 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     ])
 
     view = root
+    refreshSavedAccounts(autoConnect: true)
+  }
+
+  deinit {
+    oauthLoopbackServer?.stop()
+  }
+
+  @objc private func connectOAuth() {
+    let serviceURL = serviceURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    let clientID = oauthClientIDField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    let hubURL = oauthHubURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    let scope = oauthScopeField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard !serviceURL.isEmpty, !clientID.isEmpty else {
+      NSSound.beep()
+      return
+    }
+
+    oauthLoopbackServer?.stop()
+
+    let loopbackServer = OAuthLoopbackServer()
+    do {
+      try loopbackServer.start { [weak self] result in
+        guard let self else {
+          return
+        }
+
+        self.oauthLoopbackServer = nil
+        switch result {
+        case .success(let callback):
+          self.handleOAuthCallback(callback)
+        case .failure(let error):
+          self.show(error: error)
+        }
+      }
+      oauthLoopbackServer = loopbackServer
+    } catch {
+      show(error: error)
+      return
+    }
+
+    setConnecting(true)
+
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      do {
+        let authorization = try RustBridge.beginOAuth(
+          serviceURL: serviceURL,
+          hubURL: hubURL.isEmpty ? nil : hubURL,
+          clientID: clientID,
+          redirectURI: OAuthLoopbackServer.redirectURI,
+          scope: scope.isEmpty ? Self.defaultOAuthScope : scope
+        )
+        try SecureAccountStore.savePendingOAuth(
+          serviceURL: serviceURL,
+          authorization: authorization
+        )
+
+        guard let authorizationURL = URL(string: authorization.authorizationURL) else {
+          throw SecureAccountStoreError.oauth("OAuth authorization URL is invalid.")
+        }
+
+        DispatchQueue.main.async {
+          self?.setConnecting(false)
+          NSWorkspace.shared.open(authorizationURL)
+        }
+      } catch {
+        DispatchQueue.main.async {
+          self?.oauthLoopbackServer?.stop()
+          self?.oauthLoopbackServer = nil
+          self?.show(error: error)
+        }
+      }
+    }
+  }
+
+  private func handleOAuthCallback(_ callback: String) {
+    guard
+      let components = URLComponents(string: callback),
+      components.scheme == "http",
+      components.host == OAuthLoopbackServer.host,
+      components.port == Int(OAuthLoopbackServer.port),
+      components.path == OAuthLoopbackServer.path
+    else {
+      show(error: SecureAccountStoreError.oauth("OAuth callback URL is invalid."))
+      return
+    }
+
+    let state = components.queryItems?.first { $0.name == "state" }?.value
+    if let oauthError = components.queryItems?.first(where: { $0.name == "error" })?.value {
+      if let state {
+        try? SecureAccountStore.deletePendingOAuth(state: state)
+      }
+      let description =
+        components.queryItems?.first { $0.name == "error_description" }?.value
+      show(
+        error: SecureAccountStoreError.oauth(
+          description.map { "\(oauthError): \($0)" } ?? oauthError
+        )
+      )
+      return
+    }
+
+    guard
+      let state,
+      let code = components.queryItems?.first(where: { $0.name == "code" })?.value
+    else {
+      show(error: SecureAccountStoreError.oauth("OAuth callback is missing code or state."))
+      return
+    }
+
+    setConnecting(true)
+
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      do {
+        let pending = try SecureAccountStore.pendingOAuth(state: state)
+        let authorization = pending.authorization
+        let tokens = try RustBridge.exchangeOAuthCode(
+          hubURL: authorization.hubURL,
+          clientID: authorization.clientID,
+          redirectURI: authorization.redirectURI,
+          codeVerifier: authorization.codeVerifier,
+          code: code
+        )
+        let account = try SecureAccountStore.saveOAuthAccount(
+          serviceURL: pending.serviceURL,
+          authorization: authorization,
+          tokens: tokens
+        )
+        try SecureAccountStore.deletePendingOAuth(state: state)
+
+        let bearerToken = try SecureAccountStore.bearerToken(for: account.id)
+        let work = try RustBridge.loadMyWork(
+          serviceURL: account.serviceURL,
+          bearerToken: bearerToken
+        )
+
+        DispatchQueue.main.async {
+          self?.serviceURLField.stringValue = account.serviceURL
+          self?.show(
+            work,
+            serviceURL: account.serviceURL,
+            accountID: account.id
+          )
+          self?.refreshSavedAccounts()
+        }
+      } catch {
+        DispatchQueue.main.async {
+          self?.show(error: error)
+        }
+      }
+    }
   }
 
   @objc private func connect() {
@@ -119,13 +321,23 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
           serviceURL: serviceURL,
           bearerToken: token
         )
+        let accountID: String?
+        if token.isEmpty {
+          accountID = nil
+        } else {
+          accountID = try SecureAccountStore.savePermanentToken(
+            serviceURL: serviceURL,
+            bearerToken: token
+          ).id
+        }
 
         DispatchQueue.main.async {
           self?.show(
             work,
             serviceURL: serviceURL,
-            bearerToken: token
+            accountID: accountID
           )
+          self?.refreshSavedAccounts()
         }
       } catch {
         DispatchQueue.main.async {
@@ -137,7 +349,11 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
 
   private func setConnecting(_ connecting: Bool) {
     connectButton.isEnabled = !connecting
+    oauthConnectButton.isEnabled = !connecting
     serviceURLField.isEnabled = !connecting
+    oauthClientIDField.isEnabled = !connecting
+    oauthHubURLField.isEnabled = !connecting
+    oauthScopeField.isEnabled = !connecting
     tokenField.isEnabled = !connecting
     errorLabel.isHidden = true
 
@@ -151,13 +367,17 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
   private func show(
     _ work: MyWork,
     serviceURL: String,
-    bearerToken: String
+    accountID: String?
   ) {
     setConnecting(false)
     tokenField.stringValue = ""
 
     connectedServiceURL = serviceURL
-    connectedBearerToken = bearerToken
+    connectedAccountID = accountID
+
+    if let accountID {
+      UserDefaults.standard.set(accountID, forKey: Self.lastConnectedAccountIDKey)
+    }
     issues = work.issues
     accountName.stringValue = work.user.fullName
     accountDetail.stringValue =
@@ -173,6 +393,120 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     setConnecting(false)
     errorLabel.stringValue = error.localizedDescription
     errorLabel.isHidden = false
+  }
+
+  private func refreshSavedAccounts(autoConnect: Bool = false) {
+    for view in savedAccountsStack.arrangedSubviews {
+      savedAccountsStack.removeArrangedSubview(view)
+      view.removeFromSuperview()
+    }
+
+    do {
+      let accounts = try SecureAccountStore.accounts()
+      savedAccountsStack.isHidden = accounts.isEmpty
+
+      guard !accounts.isEmpty else {
+        return
+      }
+
+      let title = NSTextField(labelWithString: "Saved accounts")
+      title.textColor = .secondaryLabelColor
+      title.font = .systemFont(ofSize: 12, weight: .semibold)
+      savedAccountsStack.addArrangedSubview(title)
+
+      if autoConnect, connectedServiceURL.isEmpty {
+        let lastConnectedAccountID = UserDefaults.standard.string(
+          forKey: Self.lastConnectedAccountIDKey
+        )
+        let accountToConnect =
+          accounts.first { $0.id == lastConnectedAccountID }
+          ?? (accounts.count == 1 ? accounts[0] : nil)
+
+        if let accountToConnect {
+          connectStored(account: accountToConnect)
+        }
+      }
+
+      for account in accounts {
+        let connect = AccountActionButton(title: account.serviceURL) { [weak self] in
+          self?.connectStored(account: account)
+        }
+        connect.alignment = .left
+        connect.lineBreakMode = .byTruncatingMiddle
+
+        let forget = AccountActionButton(title: "Forget") { [weak self] in
+          self?.forget(account: account)
+        }
+        forget.bezelStyle = .inline
+
+        let row = NSStackView(views: [connect, forget])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        row.widthAnchor.constraint(equalToConstant: 360).isActive = true
+        connect.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        savedAccountsStack.addArrangedSubview(row)
+      }
+    } catch {
+      errorLabel.stringValue = error.localizedDescription
+      errorLabel.isHidden = false
+    }
+  }
+
+  private func connectStored(account: StoredAccount) {
+    guard connectedServiceURL.isEmpty else {
+      return
+    }
+
+    setConnecting(true)
+
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      do {
+        let token = try SecureAccountStore.bearerToken(for: account.id)
+        let work = try RustBridge.loadMyWork(
+          serviceURL: account.serviceURL,
+          bearerToken: token
+        )
+
+        DispatchQueue.main.async {
+          self?.serviceURLField.stringValue = account.serviceURL
+          self?.show(
+            work,
+            serviceURL: account.serviceURL,
+            accountID: account.id
+          )
+        }
+      } catch {
+        DispatchQueue.main.async {
+          self?.show(error: error)
+        }
+      }
+    }
+  }
+
+  private func forget(account: StoredAccount) {
+    do {
+      try SecureAccountStore.delete(accountID: account.id)
+      if UserDefaults.standard.string(forKey: Self.lastConnectedAccountIDKey) == account.id {
+        UserDefaults.standard.removeObject(forKey: Self.lastConnectedAccountIDKey)
+      }
+      refreshSavedAccounts()
+    } catch {
+      show(error: error)
+    }
+  }
+
+  @objc private func disconnect() {
+    hideInspector()
+    issues = []
+    connectedServiceURL = ""
+    connectedAccountID = nil
+    UserDefaults.standard.removeObject(forKey: Self.lastConnectedAccountIDKey)
+    accountStack.isHidden = true
+    scrollView.isHidden = true
+    connectionStack.isHidden = false
+    tableView.reloadData()
+    refreshSavedAccounts()
   }
 
   func tableViewSelectionDidChange(_ notification: Notification) {
@@ -191,7 +525,7 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
 
     let inspector = IssueInspectorViewController(
       serviceURL: connectedServiceURL,
-      bearerToken: connectedBearerToken,
+      accountID: connectedAccountID,
       issueID: issue.id,
       preview: issue,
       onBack: { [weak self] in
@@ -285,5 +619,29 @@ final class MyWorkViewController: NSViewController, NSTableViewDataSource, NSTab
     field.attributedStringValue = value
 
     return field
+  }
+  private static let lastConnectedAccountIDKey = "last_connected_account_id"
+  private static let defaultOAuthScope = "YouTrack"
+}
+
+private final class AccountActionButton: NSButton {
+  private let handler: () -> Void
+
+  init(title: String, handler: @escaping () -> Void) {
+    self.handler = handler
+    super.init(frame: .zero)
+    self.title = title
+    bezelStyle = .rounded
+    target = self
+    action = #selector(invoke)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  @objc private func invoke() {
+    handler()
   }
 }

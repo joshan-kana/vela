@@ -5,10 +5,10 @@ use std::sync::{LazyLock, Mutex};
 
 use serde::Serialize;
 use vela_core::{
-    AgileBoard, CustomFieldValue, Issue, IssueDetails, IssueLink, ProjectSchema, SavedQuery, User,
-    UserRef, YouTrackDiscovery,
+    AgileBoard, CustomFieldValue, Issue, IssueDetails, IssueLink, OAuthAuthorization,
+    OAuthTokenSet, ProjectSchema, SavedQuery, User, UserRef, YouTrackDiscovery,
 };
-use vela_youtrack::Client;
+use vela_youtrack::{Client, begin_oauth_authorization, exchange_oauth_code, refresh_oauth_token};
 
 #[derive(Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -266,6 +266,67 @@ pub extern "C" fn vela_apply_custom_field_event_json(
     })
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_begin_oauth_json(
+    service_url: *const c_char,
+    hub_url: *const c_char,
+    client_id: *const c_char,
+    redirect_uri: *const c_char,
+    scope: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let hub_url = read_optional_string(hub_url)?;
+        let client_id = read_required_string(client_id, "OAuth client ID")?;
+        let redirect_uri = read_required_string(redirect_uri, "OAuth redirect URI")?;
+        let scope = read_required_string(scope, "OAuth scope")?;
+
+        begin_oauth(
+            &service_url,
+            hub_url.as_deref(),
+            &client_id,
+            &redirect_uri,
+            &scope,
+        )
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_exchange_oauth_code_json(
+    hub_url: *const c_char,
+    client_id: *const c_char,
+    redirect_uri: *const c_char,
+    code_verifier: *const c_char,
+    code: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let hub_url = read_required_string(hub_url, "Hub URL")?;
+        let client_id = read_required_string(client_id, "OAuth client ID")?;
+        let redirect_uri = read_required_string(redirect_uri, "OAuth redirect URI")?;
+        let code_verifier = read_required_string(code_verifier, "PKCE code verifier")?;
+        let code = read_required_string(code, "OAuth authorization code")?;
+
+        exchange_oauth(&hub_url, &client_id, &redirect_uri, &code_verifier, &code)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_refresh_oauth_token_json(
+    hub_url: *const c_char,
+    client_id: *const c_char,
+    scope: *const c_char,
+    refresh_token: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let hub_url = read_required_string(hub_url, "Hub URL")?;
+        let client_id = read_required_string(client_id, "OAuth client ID")?;
+        let scope = read_required_string(scope, "OAuth scope")?;
+        let refresh_token = read_required_string(refresh_token, "OAuth refresh token")?;
+
+        refresh_oauth(&hub_url, &client_id, &scope, &refresh_token)
+    })
+}
+
 /// Frees a string allocated by the Vela FFI.
 ///
 /// # Safety
@@ -283,6 +344,48 @@ pub unsafe extern "C" fn vela_string_free(value: *mut c_char) {
 fn ffi_json<T: Serialize>(operation: impl FnOnce() -> Result<T, String>) -> *mut c_char {
     let response = catch_unwind(AssertUnwindSafe(operation));
     json_c_string(bridge_response_json(response))
+}
+
+fn begin_oauth(
+    service_url: &str,
+    hub_url: Option<&str>,
+    client_id: &str,
+    redirect_uri: &str,
+    scope: &str,
+) -> Result<OAuthAuthorization, String> {
+    begin_oauth_authorization(service_url, hub_url, client_id, redirect_uri, scope)
+        .map_err(|error| error.to_string())
+}
+
+fn exchange_oauth(
+    hub_url: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    code_verifier: &str,
+    code: &str,
+) -> Result<OAuthTokenSet, String> {
+    let runtime = runtime()?;
+
+    runtime.block_on(async {
+        exchange_oauth_code(hub_url, client_id, redirect_uri, code_verifier, code)
+            .await
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn refresh_oauth(
+    hub_url: &str,
+    client_id: &str,
+    scope: &str,
+    refresh_token: &str,
+) -> Result<OAuthTokenSet, String> {
+    let runtime = runtime()?;
+
+    runtime.block_on(async {
+        refresh_oauth_token(hub_url, client_id, scope, refresh_token)
+            .await
+            .map_err(|error| error.to_string())
+    })
 }
 
 fn discover(service_url: &str, bearer_token: Option<&str>) -> Result<YouTrackDiscovery, String> {
@@ -616,10 +719,10 @@ mod android {
     };
 
     use super::{
-        apply_custom_field_event, bridge_response_json, discover, load_agile_boards,
-        load_issue_details, load_issue_links, load_my_work, load_project_schema,
-        load_saved_queries, load_users, set_custom_field_value, set_issue_description,
-        set_issue_summary,
+        apply_custom_field_event, begin_oauth, bridge_response_json, discover, exchange_oauth,
+        load_agile_boards, load_issue_details, load_issue_links, load_my_work, load_project_schema,
+        load_saved_queries, load_users, refresh_oauth, set_custom_field_value,
+        set_issue_description, set_issue_summary,
     };
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::sync::LazyLock;
@@ -636,6 +739,94 @@ mod android {
                 Ok(())
             })
             .resolve::<ThrowRuntimeExAndDefault>();
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_beginOAuthJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        service_url: JString<'local>,
+        hub_url: JString<'local>,
+        client_id: JString<'local>,
+        redirect_uri: JString<'local>,
+        scope: JString<'local>,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let service_url = service_url.try_to_string(env)?;
+                let hub_url = hub_url.try_to_string(env)?;
+                let client_id = client_id.try_to_string(env)?;
+                let redirect_uri = redirect_uri.try_to_string(env)?;
+                let scope = scope.try_to_string(env)?;
+
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    begin_oauth(
+                        &service_url,
+                        (!hub_url.is_empty()).then_some(hub_url.as_str()),
+                        &client_id,
+                        &redirect_uri,
+                        &scope,
+                    )
+                }));
+                let json = bridge_response_json(response);
+
+                Ok(env.new_string(json)?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_exchangeOAuthCodeJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        hub_url: JString<'local>,
+        client_id: JString<'local>,
+        redirect_uri: JString<'local>,
+        code_verifier: JString<'local>,
+        code: JString<'local>,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let hub_url = hub_url.try_to_string(env)?;
+                let client_id = client_id.try_to_string(env)?;
+                let redirect_uri = redirect_uri.try_to_string(env)?;
+                let code_verifier = code_verifier.try_to_string(env)?;
+                let code = code.try_to_string(env)?;
+
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    exchange_oauth(&hub_url, &client_id, &redirect_uri, &code_verifier, &code)
+                }));
+                let json = bridge_response_json(response);
+
+                Ok(env.new_string(json)?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_refreshOAuthTokenJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        hub_url: JString<'local>,
+        client_id: JString<'local>,
+        scope: JString<'local>,
+        refresh_token: JString<'local>,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let hub_url = hub_url.try_to_string(env)?;
+                let client_id = client_id.try_to_string(env)?;
+                let scope = scope.try_to_string(env)?;
+                let refresh_token = refresh_token.try_to_string(env)?;
+
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    refresh_oauth(&hub_url, &client_id, &scope, &refresh_token)
+                }));
+                let json = bridge_response_json(response);
+
+                Ok(env.new_string(json)?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
     }
 
     #[unsafe(no_mangle)]

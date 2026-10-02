@@ -13,6 +13,7 @@ import {
   View,
 } from 'react-native';
 
+import { withConnection, type Connection } from '../native/AccountStore';
 import {
   applyCustomFieldEvent,
   loadIssueDetails,
@@ -39,8 +40,7 @@ export type InspectorPalette = {
 };
 
 type Props = {
-  serviceUrl: string;
-  bearerToken: string;
+  connection: Connection;
   issueId: string;
   palette: InspectorPalette;
   onBack(): void;
@@ -48,8 +48,7 @@ type Props = {
 };
 
 export default function IssueInspector({
-  serviceUrl,
-  bearerToken,
+  connection,
   issueId,
   palette,
   onBack,
@@ -72,11 +71,30 @@ export default function IssueInspector({
       setError(null);
 
       try {
-        const issue = await loadIssueDetails(serviceUrl, bearerToken, issueId);
-        const [projectSchema, issueLinks] = await Promise.all([
-          loadProjectSchema(serviceUrl, bearerToken, issue.project.id),
-          loadIssueLinks(serviceUrl, bearerToken, issueId),
-        ]);
+        const { issue, projectSchema, issueLinks } = await withConnection(
+          connection,
+          async (serviceUrl, bearerToken) => {
+            const loadedIssue = await loadIssueDetails(
+              serviceUrl,
+              bearerToken,
+              issueId,
+            );
+            const [loadedSchema, loadedLinks] = await Promise.all([
+              loadProjectSchema(
+                serviceUrl,
+                bearerToken,
+                loadedIssue.project.id,
+              ),
+              loadIssueLinks(serviceUrl, bearerToken, issueId),
+            ]);
+
+            return {
+              issue: loadedIssue,
+              projectSchema: loadedSchema,
+              issueLinks: loadedLinks,
+            };
+          },
+        );
 
         if (!active) {
           return;
@@ -103,7 +121,7 @@ export default function IssueInspector({
     return () => {
       active = false;
     };
-  }, [bearerToken, issueId, serviceUrl]);
+  }, [connection, issueId]);
 
   const fields = useMemo(() => {
     if (!details) {
@@ -126,11 +144,10 @@ export default function IssueInspector({
     setError(null);
 
     try {
-      const updated = await setIssueSummary(
-        serviceUrl,
-        bearerToken,
-        details.id,
-        summary,
+      const updated = await withConnection(
+        connection,
+        (serviceUrl, bearerToken) =>
+          setIssueSummary(serviceUrl, bearerToken, details.id, summary),
       );
       replaceDetails(updated);
     } catch (saveError) {
@@ -150,11 +167,15 @@ export default function IssueInspector({
     setError(null);
 
     try {
-      const updated = await setIssueDescription(
-        serviceUrl,
-        bearerToken,
-        details.id,
-        description.trim().length === 0 ? null : description,
+      const updated = await withConnection(
+        connection,
+        (serviceUrl, bearerToken) =>
+          setIssueDescription(
+            serviceUrl,
+            bearerToken,
+            details.id,
+            description.trim().length === 0 ? null : description,
+          ),
       );
       replaceDetails(updated);
     } catch (saveError) {
@@ -174,13 +195,17 @@ export default function IssueInspector({
     setError(null);
 
     try {
-      const updated = await setCustomFieldValue(
-        serviceUrl,
-        bearerToken,
-        details.id,
-        field.id,
-        field.field_type,
-        value,
+      const updated = await withConnection(
+        connection,
+        (serviceUrl, bearerToken) =>
+          setCustomFieldValue(
+            serviceUrl,
+            bearerToken,
+            details.id,
+            field.id,
+            field.field_type,
+            value,
+          ),
       );
       replaceField(updated);
     } catch (saveError) {
@@ -199,13 +224,17 @@ export default function IssueInspector({
     setError(null);
 
     try {
-      const updated = await applyCustomFieldEvent(
-        serviceUrl,
-        bearerToken,
-        details.id,
-        field.id,
-        field.field_type,
-        eventId,
+      const updated = await withConnection(
+        connection,
+        (serviceUrl, bearerToken) =>
+          applyCustomFieldEvent(
+            serviceUrl,
+            bearerToken,
+            details.id,
+            field.id,
+            field.field_type,
+            eventId,
+          ),
       );
       replaceField(updated);
     } catch (saveError) {

@@ -76,6 +76,20 @@ else
 fi
 
 cp "$repo_root/apps/macos/Info.plist" "$contents/Info.plist"
-codesign --force --sign - "$app_dir" >/dev/null
+
+codesign_identity="${VELA_CODESIGN_IDENTITY:-}"
+if [[ -z "$codesign_identity" ]]; then
+  codesign_identity="$(
+    security find-identity -v -p codesigning 2>/dev/null \
+      | awk -F'"' '/Apple Development:/ { print $2; exit }'
+  )"
+fi
+
+if [[ -z "$codesign_identity" ]]; then
+  codesign_identity="-"
+  echo "warning: no Apple Development signing identity found; using ad-hoc signing" >&2
+fi
+
+codesign --force --sign "$codesign_identity" --timestamp=none "$app_dir" >/dev/null
 
 echo "$app_dir"

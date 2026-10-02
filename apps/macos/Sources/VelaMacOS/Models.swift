@@ -357,3 +357,39 @@ struct IssueLink: Decodable {
     case issues
   }
 }
+
+struct OAuthAuthorization: Codable {
+  let authorizationURL: String
+  let hubURL: String
+  let clientID: String
+  let redirectURI: String
+  let scope: String
+  let state: String
+  let codeVerifier: String
+
+  private enum CodingKeys: String, CodingKey {
+    case authorizationURL = "authorization_url"
+    case hubURL = "hub_url"
+    case clientID = "client_id"
+    case redirectURI = "redirect_uri"
+    case scope
+    case state
+    case codeVerifier = "code_verifier"
+  }
+}
+
+struct OAuthTokenSet: Codable {
+  let accessToken: String
+  let refreshToken: String?
+  let expiresIn: Int64?
+  let tokenType: String?
+  let scope: String?
+
+  private enum CodingKeys: String, CodingKey {
+    case accessToken = "access_token"
+    case refreshToken = "refresh_token"
+    case expiresIn = "expires_in"
+    case tokenType = "token_type"
+    case scope
+  }
+}

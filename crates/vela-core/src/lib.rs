@@ -201,3 +201,23 @@ pub struct YouTrackDiscovery {
     pub agile_boards: CapabilityState,
     pub saved_queries: CapabilityState,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OAuthAuthorization {
+    pub authorization_url: String,
+    pub hub_url: String,
+    pub client_id: String,
+    pub redirect_uri: String,
+    pub scope: String,
+    pub state: String,
+    pub code_verifier: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OAuthTokenSet {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_in: Option<i64>,
+    pub token_type: Option<String>,
+    pub scope: Option<String>,
+}

@@ -18,6 +18,96 @@ enum RustBridgeError: LocalizedError {
 }
 
 enum RustBridge {
+  static func beginOAuth(
+    serviceURL: String,
+    hubURL: String?,
+    clientID: String,
+    redirectURI: String,
+    scope: String
+  ) throws -> OAuthAuthorization {
+    let result: UnsafeMutablePointer<CChar>? = serviceURL.withCString { serviceURLPointer in
+      clientID.withCString { clientIDPointer in
+        redirectURI.withCString { redirectURIPointer in
+          scope.withCString { scopePointer in
+            if let hubURL, !hubURL.isEmpty {
+              return hubURL.withCString { hubURLPointer in
+                vela_begin_oauth_json(
+                  serviceURLPointer,
+                  hubURLPointer,
+                  clientIDPointer,
+                  redirectURIPointer,
+                  scopePointer
+                )
+              }
+            }
+
+            return vela_begin_oauth_json(
+              serviceURLPointer,
+              nil,
+              clientIDPointer,
+              redirectURIPointer,
+              scopePointer
+            )
+          }
+        }
+      }
+    }
+
+    return try decode(result, fallbackMessage: "Unable to start OAuth authorization.")
+  }
+
+  static func exchangeOAuthCode(
+    hubURL: String,
+    clientID: String,
+    redirectURI: String,
+    codeVerifier: String,
+    code: String
+  ) throws -> OAuthTokenSet {
+    let result: UnsafeMutablePointer<CChar>? = hubURL.withCString { hubURLPointer in
+      clientID.withCString { clientIDPointer in
+        redirectURI.withCString { redirectURIPointer in
+          codeVerifier.withCString { codeVerifierPointer in
+            code.withCString { codePointer in
+              vela_exchange_oauth_code_json(
+                hubURLPointer,
+                clientIDPointer,
+                redirectURIPointer,
+                codeVerifierPointer,
+                codePointer
+              )
+            }
+          }
+        }
+      }
+    }
+
+    return try decode(result, fallbackMessage: "Unable to exchange the OAuth authorization code.")
+  }
+
+  static func refreshOAuthToken(
+    hubURL: String,
+    clientID: String,
+    scope: String,
+    refreshToken: String
+  ) throws -> OAuthTokenSet {
+    let result: UnsafeMutablePointer<CChar>? = hubURL.withCString { hubURLPointer in
+      clientID.withCString { clientIDPointer in
+        scope.withCString { scopePointer in
+          refreshToken.withCString { refreshTokenPointer in
+            vela_refresh_oauth_token_json(
+              hubURLPointer,
+              clientIDPointer,
+              scopePointer,
+              refreshTokenPointer
+            )
+          }
+        }
+      }
+    }
+
+    return try decode(result, fallbackMessage: "Unable to refresh the OAuth access token.")
+  }
+
   static func discover(
     serviceURL: String,
     bearerToken: String
