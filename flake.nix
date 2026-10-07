@@ -164,18 +164,52 @@
           projectRootFile = "flake.nix";
 
           programs = {
+            clang-format.enable = true;
             deadnix.enable = true;
+            ktlint.enable = true;
             nixfmt.enable = true;
             prettier.enable = true;
             rumdl-check.enable = true;
             rumdl-format.enable = true;
             rustfmt.enable = true;
+            shellcheck.enable = true;
+            shfmt = {
+              enable = true;
+              useEditorConfig = true;
+            };
             statix.enable = true;
             taplo.enable = true;
             typos.enable = true;
+            xmllint.enable = true;
           };
 
           settings.formatter = {
+            clang-format.includes = [
+              "*.c"
+              "*.cc"
+              "*.cpp"
+              "*.h"
+              "*.hh"
+              "*.hpp"
+              "*.m"
+              "*.mm"
+            ];
+
+            ktlint.includes = [ "apps/native/android/**/*.kt" ];
+
+            groovy-lint = {
+              command = pkgs.lib.getExe pkgs.npm-groovy-lint;
+              includes = [ "*.gradle" ];
+              options = [
+                "--noserver"
+                "--format"
+                "--failon"
+                "error"
+              ];
+            };
+
+            xmllint.includes = [ "apps/native/android/**/*.xml" ];
+
             statix.priority = 1;
             deadnix.priority = 2;
             nixfmt.priority = 3;
@@ -207,12 +241,24 @@
 
             swift-format = {
               command = pkgs.lib.getExe pkgs.swift-format;
-              includes = [ "apps/macos/**/*.swift" ];
+              includes = [ "apps/**/*.swift" ];
               options = [
                 "format"
                 "--in-place"
               ];
+              priority = 1;
             };
+
+            swift-lint = {
+              command = pkgs.lib.getExe pkgs.swift-format;
+              includes = [ "apps/**/*.swift" ];
+              options = [ "lint" ];
+              priority = 2;
+            };
+
+            shfmt.priority = 1;
+            shellcheck.priority = 2;
+            ktlint.priority = 1;
           };
         };
 
@@ -224,7 +270,7 @@
               enable = true;
               name = "Repository formatting and linting";
               entry = "nix build --no-link .#checks.${system}.repo-quality";
-              files = "\\.(json|lock|md|nix|plist|rs|sh|swift|toml|tsx?|ya?ml)$|^\\.envrc$";
+              files = "\\.(c|cc|cpp|gradle|h|hh|hpp|js|json|kt|kts|lock|m|md|mm|nix|plist|rs|sh|swift|toml|tsx?|xml|ya?ml)$|^\\.(clang-format|editorconfig|envrc)$";
               pass_filenames = false;
             };
 
