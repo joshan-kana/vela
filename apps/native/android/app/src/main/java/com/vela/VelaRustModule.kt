@@ -6,8 +6,8 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
-import java.util.concurrent.Executors
 import org.json.JSONObject
+import java.util.concurrent.Executors
 
 class VelaRustModule(
   reactContext: ReactApplicationContext,
@@ -471,7 +471,10 @@ class VelaRustModule(
     val secret = accountStore.accountSecret(accountId)
 
     return when (secret.getString("auth_kind")) {
-      SecureAccountStore.PERMANENT_TOKEN -> secret.getString("bearer_token")
+      SecureAccountStore.PERMANENT_TOKEN -> {
+        secret.getString("bearer_token")
+      }
+
       SecureAccountStore.OAUTH_PKCE -> {
         val accessToken = secret.getString("access_token")
         val expiresAt =
@@ -508,7 +511,10 @@ class VelaRustModule(
 
         nextAccessToken
       }
-      else -> error("Stored YouTrack authentication method is unsupported")
+
+      else -> {
+        error("Stored YouTrack authentication method is unsupported")
+      }
     }
   }
 

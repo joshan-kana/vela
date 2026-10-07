@@ -102,8 +102,7 @@ static BOOL VelaSaveKeychainDictionary(NSString *service,
 
   OSStatus status = SecItemUpdate(
     (__bridge CFDictionaryRef)query,
-    (__bridge CFDictionaryRef)attributes
-  );
+    (__bridge CFDictionaryRef)attributes);
   if (status == errSecItemNotFound) {
     NSMutableDictionary *add = [query mutableCopy];
     [add addEntriesFromDictionary:attributes];
@@ -121,8 +120,8 @@ static BOOL VelaSaveKeychainDictionary(NSString *service,
 }
 
 static NSDictionary *VelaLoadKeychainDictionary(NSString *service,
-                                                 NSString *accountId,
-                                                 NSError **error)
+                                                NSString *accountId,
+                                                NSError **error)
 {
   NSDictionary *query = @{
     (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
@@ -270,11 +269,11 @@ static NSNumber *VelaOptionalNumber(NSDictionary *dictionary, NSString *key)
 }
 
 static NSDictionary *VelaSaveOAuthAccount(NSString *serviceUrl,
-                                           NSString *hubUrl,
-                                           NSString *clientId,
-                                           NSString *scope,
-                                           NSDictionary *tokens,
-                                           NSError **error)
+                                          NSString *hubUrl,
+                                          NSString *clientId,
+                                          NSString *scope,
+                                          NSDictionary *tokens,
+                                          NSError **error)
 {
   NSString *normalizedUrl =
     [serviceUrl stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -327,8 +326,8 @@ static NSDictionary *VelaSaveOAuthAccount(NSString *serviceUrl,
 }
 
 static NSDictionary *VelaSavePermanentToken(NSString *serviceUrl,
-                                             NSString *bearerToken,
-                                             NSError **error)
+                                            NSString *bearerToken,
+                                            NSError **error)
 {
   NSString *normalizedUrl =
     [serviceUrl stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -412,10 +411,8 @@ static NSString *VelaLoadAccountToken(NSString *accountId, NSError **error)
       hubUrl.UTF8String,
       clientId.UTF8String,
       scope.UTF8String,
-      refreshToken.UTF8String
-    ),
-    error
-  );
+      refreshToken.UTF8String),
+    error);
   if (tokens == nil) {
     return nil;
   }
@@ -505,8 +502,8 @@ static void ResolveRustResponse(char *result,
 RCT_EXPORT_MODULE(VelaRust)
 
 RCT_REMAP_METHOD(listAccounts,
-                 listAccountsWithResolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 listAccountsWithResolver : (RCTPromiseResolveBlock)resolve
+                   rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     NSError *error = nil;
@@ -529,10 +526,10 @@ RCT_REMAP_METHOD(listAccounts,
 }
 
 RCT_REMAP_METHOD(savePermanentTokenAccount,
-                 savePermanentTokenAccountWithServiceUrl:(NSString *)serviceUrl
-                 bearerToken:(NSString *)bearerToken
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 savePermanentTokenAccountWithServiceUrl : (NSString *)serviceUrl
+                   bearerToken : (NSString *)bearerToken
+                     resolver : (RCTPromiseResolveBlock)resolve
+                       rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     NSError *error = nil;
@@ -546,9 +543,9 @@ RCT_REMAP_METHOD(savePermanentTokenAccount,
 }
 
 RCT_REMAP_METHOD(deleteAccount,
-                 deleteAccountWithId:(NSString *)accountId
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 deleteAccountWithId : (NSString *)accountId
+                   resolver : (RCTPromiseResolveBlock)resolve
+                     rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     NSError *error = nil;
@@ -561,9 +558,9 @@ RCT_REMAP_METHOD(deleteAccount,
 }
 
 RCT_REMAP_METHOD(loadAccountToken,
-                 loadAccountTokenWithId:(NSString *)accountId
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 loadAccountTokenWithId : (NSString *)accountId
+                   resolver : (RCTPromiseResolveBlock)resolve
+                     rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     NSError *error = nil;
@@ -577,12 +574,12 @@ RCT_REMAP_METHOD(loadAccountToken,
 }
 
 RCT_REMAP_METHOD(beginOAuth,
-                 beginOAuthWithServiceUrl:(NSString *)serviceUrl
-                 clientId:(NSString *)clientId
-                 hubUrl:(NSString *)hubUrl
-                 scope:(NSString *)scope
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 beginOAuthWithServiceUrl : (NSString *)serviceUrl
+                   clientId : (NSString *)clientId
+                     hubUrl : (NSString *)hubUrl
+                       scope : (NSString *)scope
+                         resolver : (RCTPromiseResolveBlock)resolve
+                           rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     NSString *normalizedServiceUrl =
@@ -608,10 +605,8 @@ RCT_REMAP_METHOD(beginOAuth,
         normalizedHubUrl.length > 0 ? normalizedHubUrl.UTF8String : NULL,
         normalizedClientId.UTF8String,
         VelaOAuthRedirectUri.UTF8String,
-        normalizedScope.UTF8String
-      ),
-      &error
-    );
+        normalizedScope.UTF8String),
+      &error);
     if (authorization == nil) {
       reject(@"vela_oauth", error.localizedDescription, error);
       return;
@@ -640,9 +635,9 @@ RCT_REMAP_METHOD(beginOAuth,
 }
 
 RCT_REMAP_METHOD(completeOAuth,
-                 completeOAuthWithCallbackUrl:(NSString *)callbackUrl
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 completeOAuthWithCallbackUrl : (NSString *)callbackUrl
+                   resolver : (RCTPromiseResolveBlock)resolve
+                     rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     NSURLComponents *components = [NSURLComponents componentsWithString:callbackUrl];
@@ -662,8 +657,8 @@ RCT_REMAP_METHOD(completeOAuth,
       }
       NSString *description = VelaQueryValue(components, @"error_description");
       NSString *message = description != nil
-        ? [NSString stringWithFormat:@"%@: %@", oauthError, description]
-        : oauthError;
+                            ? [NSString stringWithFormat:@"%@: %@", oauthError, description]
+                            : oauthError;
       NSError *error = VelaError(message);
       reject(@"vela_oauth", error.localizedDescription, error);
       return;
@@ -703,10 +698,8 @@ RCT_REMAP_METHOD(completeOAuth,
         clientId.UTF8String,
         redirectUri.UTF8String,
         codeVerifier.UTF8String,
-        code.UTF8String
-      ),
-      &error
-    );
+        code.UTF8String),
+      &error);
     if (tokens == nil) {
       reject(@"vela_oauth", error.localizedDescription, error);
       return;
@@ -718,8 +711,7 @@ RCT_REMAP_METHOD(completeOAuth,
       clientId,
       scope,
       tokens,
-      &error
-    );
+      &error);
     if (account == nil) {
       reject(@"vela_oauth", error.localizedDescription, error);
       return;
@@ -731,10 +723,10 @@ RCT_REMAP_METHOD(completeOAuth,
 }
 
 RCT_REMAP_METHOD(discover,
-                 discoverWithServiceUrl:(NSString *)serviceUrl
-                 bearerToken:(NSString *)bearerToken
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 discoverWithServiceUrl : (NSString *)serviceUrl
+                   bearerToken : (NSString *)bearerToken
+                     resolver : (RCTPromiseResolveBlock)resolve
+                       rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     const char *serviceUrlUtf8 = serviceUrl.UTF8String;
@@ -745,11 +737,11 @@ RCT_REMAP_METHOD(discover,
 }
 
 RCT_REMAP_METHOD(loadProjectSchema,
-                 loadProjectSchemaWithServiceUrl:(NSString *)serviceUrl
-                 bearerToken:(NSString *)bearerToken
-                 projectId:(NSString *)projectId
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 loadProjectSchemaWithServiceUrl : (NSString *)serviceUrl
+                   bearerToken : (NSString *)bearerToken
+                     projectId : (NSString *)projectId
+                       resolver : (RCTPromiseResolveBlock)resolve
+                         rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     const char *serviceUrlUtf8 = serviceUrl.UTF8String;
@@ -760,12 +752,12 @@ RCT_REMAP_METHOD(loadProjectSchema,
 }
 
 RCT_REMAP_METHOD(loadUsers,
-                 loadUsersWithServiceUrl:(NSString *)serviceUrl
-                 bearerToken:(NSString *)bearerToken
-                 skip:(nonnull NSNumber *)skip
-                 top:(nonnull NSNumber *)top
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 loadUsersWithServiceUrl : (NSString *)serviceUrl
+                   bearerToken : (NSString *)bearerToken
+                     skip : (nonnull NSNumber *)skip
+                       top : (nonnull NSNumber *)top
+                         resolver : (RCTPromiseResolveBlock)resolve
+                           rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     const char *serviceUrlUtf8 = serviceUrl.UTF8String;
@@ -778,12 +770,12 @@ RCT_REMAP_METHOD(loadUsers,
 }
 
 RCT_REMAP_METHOD(loadAgileBoards,
-                 loadAgileBoardsWithServiceUrl:(NSString *)serviceUrl
-                 bearerToken:(NSString *)bearerToken
-                 skip:(nonnull NSNumber *)skip
-                 top:(nonnull NSNumber *)top
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 loadAgileBoardsWithServiceUrl : (NSString *)serviceUrl
+                   bearerToken : (NSString *)bearerToken
+                     skip : (nonnull NSNumber *)skip
+                       top : (nonnull NSNumber *)top
+                         resolver : (RCTPromiseResolveBlock)resolve
+                           rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     const char *serviceUrlUtf8 = serviceUrl.UTF8String;
@@ -796,12 +788,12 @@ RCT_REMAP_METHOD(loadAgileBoards,
 }
 
 RCT_REMAP_METHOD(loadSavedQueries,
-                 loadSavedQueriesWithServiceUrl:(NSString *)serviceUrl
-                 bearerToken:(NSString *)bearerToken
-                 skip:(nonnull NSNumber *)skip
-                 top:(nonnull NSNumber *)top
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 loadSavedQueriesWithServiceUrl : (NSString *)serviceUrl
+                   bearerToken : (NSString *)bearerToken
+                     skip : (nonnull NSNumber *)skip
+                       top : (nonnull NSNumber *)top
+                         resolver : (RCTPromiseResolveBlock)resolve
+                           rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     const char *serviceUrlUtf8 = serviceUrl.UTF8String;
@@ -814,11 +806,11 @@ RCT_REMAP_METHOD(loadSavedQueries,
 }
 
 RCT_REMAP_METHOD(executeIssueAction,
-                 executeIssueActionWithServiceUrl:(NSString *)serviceUrl
-                 bearerToken:(NSString *)bearerToken
-                 action:(NSDictionary *)action
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 executeIssueActionWithServiceUrl : (NSString *)serviceUrl
+                   bearerToken : (NSString *)bearerToken
+                     action : (NSDictionary *)action
+                       resolver : (RCTPromiseResolveBlock)resolve
+                         rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     NSError *jsonError = nil;
@@ -839,18 +831,17 @@ RCT_REMAP_METHOD(executeIssueAction,
     char *result = vela_execute_issue_action_json(
       serviceUrlUtf8,
       tokenUtf8,
-      actionJson.UTF8String
-    );
+      actionJson.UTF8String);
     ResolveRustResponse(result, resolve, reject);
   });
 }
 
 RCT_REMAP_METHOD(loadIssueDetails,
-                 loadIssueDetailsWithServiceUrl:(NSString *)serviceUrl
-                 bearerToken:(NSString *)bearerToken
-                 issueId:(NSString *)issueId
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 loadIssueDetailsWithServiceUrl : (NSString *)serviceUrl
+                   bearerToken : (NSString *)bearerToken
+                     issueId : (NSString *)issueId
+                       resolver : (RCTPromiseResolveBlock)resolve
+                         rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     const char *serviceUrlUtf8 = serviceUrl.UTF8String;
@@ -861,11 +852,11 @@ RCT_REMAP_METHOD(loadIssueDetails,
 }
 
 RCT_REMAP_METHOD(loadIssueLinks,
-                 loadIssueLinksWithServiceUrl:(NSString *)serviceUrl
-                 bearerToken:(NSString *)bearerToken
-                 issueId:(NSString *)issueId
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 loadIssueLinksWithServiceUrl : (NSString *)serviceUrl
+                   bearerToken : (NSString *)bearerToken
+                     issueId : (NSString *)issueId
+                       resolver : (RCTPromiseResolveBlock)resolve
+                         rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     const char *serviceUrlUtf8 = serviceUrl.UTF8String;
@@ -876,12 +867,12 @@ RCT_REMAP_METHOD(loadIssueLinks,
 }
 
 RCT_REMAP_METHOD(setIssueSummary,
-                 setIssueSummaryWithServiceUrl:(NSString *)serviceUrl
-                 bearerToken:(NSString *)bearerToken
-                 issueId:(NSString *)issueId
-                 summary:(NSString *)summary
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 setIssueSummaryWithServiceUrl : (NSString *)serviceUrl
+                   bearerToken : (NSString *)bearerToken
+                     issueId : (NSString *)issueId
+                       summary : (NSString *)summary
+                         resolver : (RCTPromiseResolveBlock)resolve
+                           rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     const char *serviceUrlUtf8 = serviceUrl.UTF8String;
@@ -890,19 +881,18 @@ RCT_REMAP_METHOD(setIssueSummary,
       serviceUrlUtf8,
       tokenUtf8,
       issueId.UTF8String,
-      summary.UTF8String
-    );
+      summary.UTF8String);
     ResolveRustResponse(result, resolve, reject);
   });
 }
 
 RCT_REMAP_METHOD(setIssueDescription,
-                 setIssueDescriptionWithServiceUrl:(NSString *)serviceUrl
-                 bearerToken:(NSString *)bearerToken
-                 issueId:(NSString *)issueId
-                 description:(id)description
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 setIssueDescriptionWithServiceUrl : (NSString *)serviceUrl
+                   bearerToken : (NSString *)bearerToken
+                     issueId : (NSString *)issueId
+                       description : (id)description
+                         resolver : (RCTPromiseResolveBlock)resolve
+                           rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     const char *serviceUrlUtf8 = serviceUrl.UTF8String;
@@ -917,21 +907,20 @@ RCT_REMAP_METHOD(setIssueDescription,
       serviceUrlUtf8,
       tokenUtf8,
       issueId.UTF8String,
-      descriptionUtf8
-    );
+      descriptionUtf8);
     ResolveRustResponse(result, resolve, reject);
   });
 }
 
 RCT_REMAP_METHOD(setCustomFieldValue,
-                 setCustomFieldValueWithServiceUrl:(NSString *)serviceUrl
-                 bearerToken:(NSString *)bearerToken
-                 issueId:(NSString *)issueId
-                 fieldId:(NSString *)fieldId
-                 fieldType:(NSString *)fieldType
-                 value:(id)value
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 setCustomFieldValueWithServiceUrl : (NSString *)serviceUrl
+                   bearerToken : (NSString *)bearerToken
+                     issueId : (NSString *)issueId
+                       fieldId : (NSString *)fieldId
+                         fieldType : (NSString *)fieldType
+                           value : (id)value
+                             resolver : (RCTPromiseResolveBlock)resolve
+                               rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     NSError *jsonError = nil;
@@ -958,21 +947,20 @@ RCT_REMAP_METHOD(setCustomFieldValue,
       issueId.UTF8String,
       fieldId.UTF8String,
       fieldType.UTF8String,
-      valueJson.UTF8String
-    );
+      valueJson.UTF8String);
     ResolveRustResponse(result, resolve, reject);
   });
 }
 
 RCT_REMAP_METHOD(applyCustomFieldEvent,
-                 applyCustomFieldEventWithServiceUrl:(NSString *)serviceUrl
-                 bearerToken:(NSString *)bearerToken
-                 issueId:(NSString *)issueId
-                 fieldId:(NSString *)fieldId
-                 fieldType:(NSString *)fieldType
-                 eventId:(NSString *)eventId
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 applyCustomFieldEventWithServiceUrl : (NSString *)serviceUrl
+                   bearerToken : (NSString *)bearerToken
+                     issueId : (NSString *)issueId
+                       fieldId : (NSString *)fieldId
+                         fieldType : (NSString *)fieldType
+                           eventId : (NSString *)eventId
+                             resolver : (RCTPromiseResolveBlock)resolve
+                               rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     const char *serviceUrlUtf8 = serviceUrl.UTF8String;
@@ -983,18 +971,17 @@ RCT_REMAP_METHOD(applyCustomFieldEvent,
       issueId.UTF8String,
       fieldId.UTF8String,
       fieldType.UTF8String,
-      eventId.UTF8String
-    );
+      eventId.UTF8String);
     ResolveRustResponse(result, resolve, reject);
   });
 }
 
 RCT_REMAP_METHOD(loadMyWork,
-                 loadMyWorkWithServiceUrl:(NSString *)serviceUrl
-                 bearerToken:(NSString *)bearerToken
-                 top:(nonnull NSNumber *)top
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+                 loadMyWorkWithServiceUrl : (NSString *)serviceUrl
+                   bearerToken : (NSString *)bearerToken
+                     top : (nonnull NSNumber *)top
+                       resolver : (RCTPromiseResolveBlock)resolve
+                         rejecter : (RCTPromiseRejectBlock)reject)
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     const char *serviceUrlUtf8 = serviceUrl.UTF8String;

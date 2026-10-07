@@ -2,22 +2,25 @@ import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ValueSource
 import org.gradle.api.provider.ValueSourceParameters
 
-apply plugin: "com.android.application"
-apply plugin: "org.jetbrains.kotlin.android"
-apply plugin: "com.facebook.react"
+apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
+apply plugin: 'com.facebook.react'
 
 repositories {
     maven {
-        url = uri("https://github.com/rustls/rustls-platform-verifier/raw/maven-archive/android-release-support/maven/")
+        url = uri('https://github.com/rustls/rustls-platform-verifier/raw/maven-archive/android-release-support/maven/')
     }
 }
 
 abstract class RustlsVersion implements ValueSource<String, RustlsVersion.Params> {
+
     interface Params extends ValueSourceParameters {
+
         RegularFileProperty getLockFile()
+
     }
 
-    static final String CRATE_NAME = "rustls-platform-verifier-android"
+    static final String CRATE_NAME = 'rustls-platform-verifier-android'
 
     @Override
     String obtain() {
@@ -25,7 +28,7 @@ abstract class RustlsVersion implements ValueSource<String, RustlsVersion.Params
         def lines = lockFile.readLines()
         def nameIndex = lines.findIndexOf { it.trim() == 'name = "' + CRATE_NAME + '"' }
         def version = nameIndex < 0 ? null : lines.drop(nameIndex + 1)
-                .find { it.stripLeading().startsWith("version = ") }
+                .find { it.stripLeading().startsWith('version = ') }
                 ?.find(/"([^"]*)"/) { match, value -> value }
 
         if (!version) {
@@ -34,19 +37,20 @@ abstract class RustlsVersion implements ValueSource<String, RustlsVersion.Params
 
         return version
     }
+
 }
 
 def rustlsPlatformVerifierVersion = providers.of(RustlsVersion) { spec ->
-    spec.parameters.lockFile.set(layout.projectDirectory.file("../../../../Cargo.lock"))
+    spec.parameters.lockFile.set(layout.projectDirectory.file('../../../../Cargo.lock'))
 }
 
 configurations.configureEach { configuration ->
     configuration.resolutionStrategy.eachDependency { details ->
-        if (details.requested.group == "org.rustls" &&
-                details.requested.name == "rustls-platform-verifier") {
+        if (details.requested.group == 'org.rustls' &&
+                details.requested.name == 'rustls-platform-verifier') {
             details.useVersion(rustlsPlatformVerifierVersion.get())
-            details.because("Android verifier version must match Cargo.lock")
-        }
+            details.because('Android verifier version must match Cargo.lock')
+                }
     }
 }
 
@@ -123,10 +127,10 @@ def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 def velaRustScript = file("$rootDir/../../../scripts/build-rust-android.sh")
 def velaRustDebugDir = file("$buildDir/generated/vela-rust/debug/jniLibs")
 def velaRustReleaseDir = file("$buildDir/generated/vela-rust/release/jniLibs")
-def velaRustAbis = (project.findProperty("reactNativeArchitectures")
-        ?: "armeabi-v7a,arm64-v8a,x86,x86_64")
-        .replace(",", " ")
-def velaNdkPath = System.getenv("ANDROID_NDK_HOME")
+def velaRustAbis = (project.findProperty('reactNativeArchitectures')
+        ?: 'armeabi-v7a,arm64-v8a,x86,x86_64')
+        .replace(',', ' ')
+def velaNdkPath = System.getenv('ANDROID_NDK_HOME')
 
 android {
     ndkVersion rootProject.ext.ndkVersion
@@ -136,13 +140,13 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "com.vela"
+    namespace 'com.vela'
     defaultConfig {
-        applicationId "com.vela"
+        applicationId 'com.vela'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
-        versionName "1.0"
+        versionName '1.0'
     }
     signingConfigs {
         debug {
@@ -161,7 +165,7 @@ android {
             // see https://reactnative.dev/docs/signed-apk-android.
             signingConfig signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
-            proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
 
@@ -175,33 +179,33 @@ android {
     }
 }
 
-def buildVelaRustDebug = tasks.register("buildVelaRustDebug", Exec) {
-    environment "VELA_ANDROID_ABIS", velaRustAbis
-    commandLine velaRustScript, "Debug", velaRustDebugDir
+def buildVelaRustDebug = tasks.register('buildVelaRustDebug', Exec) {
+    environment 'VELA_ANDROID_ABIS', velaRustAbis
+    commandLine velaRustScript, 'Debug', velaRustDebugDir
 }
 
-def buildVelaRustRelease = tasks.register("buildVelaRustRelease", Exec) {
-    environment "VELA_ANDROID_ABIS", velaRustAbis
-    commandLine velaRustScript, "Release", velaRustReleaseDir
+def buildVelaRustRelease = tasks.register('buildVelaRustRelease', Exec) {
+    environment 'VELA_ANDROID_ABIS', velaRustAbis
+    commandLine velaRustScript, 'Release', velaRustReleaseDir
 }
 
 tasks.configureEach {
-    if (name == "mergeDebugJniLibFolders") {
+    if (name == 'mergeDebugJniLibFolders') {
         dependsOn buildVelaRustDebug
     }
 
-    if (name == "mergeReleaseJniLibFolders") {
+    if (name == 'mergeReleaseJniLibFolders') {
         dependsOn buildVelaRustRelease
     }
 }
 
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
-    implementation("com.facebook.react:react-android")
-    implementation("org.rustls:rustls-platform-verifier")
+    implementation('com.facebook.react:react-android')
+    implementation('org.rustls:rustls-platform-verifier')
 
     if (hermesEnabled.toBoolean()) {
-        implementation("com.facebook.react:hermes-android")
+        implementation('com.facebook.react:hermes-android')
     } else {
         implementation jscFlavor
     }

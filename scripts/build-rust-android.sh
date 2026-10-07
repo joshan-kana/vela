@@ -13,7 +13,7 @@ if [[ "$configuration" == "Release" ]]; then
 fi
 
 ndk_version="$(
-  sed -n     's/^[[:space:]]*ndkVersion = "\([^"]*\)".*/\1/p'     "$repo_root/apps/native/android/build.gradle" |
+  sed -n 's/^[[:space:]]*ndkVersion = "\([^"]*\)".*/\1/p' "$repo_root/apps/native/android/build.gradle" |
     head -1
 )"
 
@@ -79,4 +79,4 @@ mkdir -p "$output_dir"
 
 cd "$repo_root"
 
-ANDROID_NDK_HOME="$ndk_dir"   "${cargo_ndk[@]}"   "${targets[@]}"   --platform "$platform"   --output-dir "$output_dir"   "${cargo_args[@]}"
+ANDROID_NDK_HOME="$ndk_dir" "${cargo_ndk[@]}" "${targets[@]}" --platform "$platform" --output-dir "$output_dir" "${cargo_args[@]}"

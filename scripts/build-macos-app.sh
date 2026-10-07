@@ -80,8 +80,8 @@ cp "$repo_root/apps/macos/Info.plist" "$contents/Info.plist"
 codesign_identity="${VELA_CODESIGN_IDENTITY:-}"
 if [[ -z "$codesign_identity" ]]; then
   codesign_identity="$(
-    security find-identity -v -p codesigning 2>/dev/null \
-      | awk -F'"' '/Apple Development:/ { print $2; exit }'
+    security find-identity -v -p codesigning 2>/dev/null |
+      awk -F'"' '/Apple Development:/ { print $2; exit }'
   )"
 fi
 

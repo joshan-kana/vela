@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import java.util.UUID
@@ -11,7 +12,6 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
-import org.json.JSONObject
 
 data class StoredAccount(
   val id: String,
@@ -118,7 +118,10 @@ class SecureAccountStore(
     accounts.edit().remove(accountId).apply()
   }
 
-  fun savePendingOAuth(state: String, pending: JSONObject) {
+  fun savePendingOAuth(
+    state: String,
+    pending: JSONObject,
+  ) {
     pendingOAuth.edit().putString(state, encrypt(pending.toString())).apply()
   }
 
@@ -134,9 +137,10 @@ class SecureAccountStore(
   }
 
   private fun existingAccountId(serviceUrl: String): String? =
-    accountEntries().firstOrNull { (_, secret) ->
-      secret.optString("service_url") == serviceUrl
-    }?.first
+    accountEntries()
+      .firstOrNull { (_, secret) ->
+        secret.optString("service_url") == serviceUrl
+      }?.first
 
   private fun accountEntries(): List<Pair<String, JSONObject>> =
     accounts.all.mapNotNull { (id, value) ->
@@ -184,7 +188,8 @@ class SecureAccountStore(
     val generator =
       KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
     generator.init(
-      KeyGenParameterSpec.Builder(
+      KeyGenParameterSpec
+        .Builder(
           KEY_ALIAS,
           KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
         ).setBlockModes(KeyProperties.BLOCK_MODE_GCM)
