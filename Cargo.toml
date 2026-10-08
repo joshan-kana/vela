@@ -1,6 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["crates/vela-core", "crates/vela-ffi", "crates/vela-youtrack"]
+members = [
+  "crates/vela-core",
+  "crates/vela-ffi",
+  "crates/vela-youtrack",
+  "crates/vela-cache",
+]
 
 [workspace.package]
 edition = "2024"
