@@ -281,6 +281,26 @@ impl Cache {
         Ok(())
     }
 
+    // One atomic SQLite UPDATE prevents multiple windows from replaying the
+    // same queued edit concurrently. A stale local snapshot cannot claim twice.
+    fn claim(&self, account: &str, entry: &OutboxEntry) -> Result<bool, Error> {
+        let now = now_ms();
+        let changed = self.db.execute(
+            "UPDATE outbox SET status = 'sending', next_attempt_ms = ?5, message = NULL
+             WHERE account = ?1 AND id = ?2 AND status = ?3
+               AND attempts = ?4 AND next_attempt_ms <= ?6",
+            params![
+                account,
+                entry.id,
+                entry.status.as_str(),
+                entry.attempts,
+                now + 5 * 60 * 1000,
+                now,
+            ],
+        )?;
+        Ok(changed == 1)
+    }
+
     /// Explicit user-triggered replay only. Not called by optimistic UI flows.
     /// Stops on the first blocked entry, preserving the order of edits.
     pub async fn reconcile(
@@ -298,14 +318,9 @@ impl Cache {
             if entry.next_attempt_ms > now_ms() {
                 break;
             }
-            // Preserve an active network request while other windows open the cache.
-            self.set_status(
-                entry.id,
-                OutboxStatus::Sending,
-                entry.attempts,
-                now_ms() + 5 * 60 * 1000,
-                None,
-            )?;
+            if !self.claim(account, &entry)? {
+                break;
+            }
             let remote = match client.issue_details(&entry.issue_id).await {
                 Ok(value) => value,
                 Err(error) => {
@@ -584,6 +599,19 @@ mod tests {
             .execute_batch("PRAGMA user_version = 99;")
             .unwrap();
         assert!(matches!(Cache::open(&path), Err(Error::FutureVersion(99))));
+    }
+
+    #[test]
+    fn only_one_connection_claims_a_pending_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.sqlite3");
+        let mut first = Cache::open(&path).unwrap();
+        first.enqueue_summary("a", &issue(), "new").unwrap();
+        let second = Cache::open(&path).unwrap();
+        let entry = first.outbox("a").unwrap().remove(0);
+        assert!(first.claim("a", &entry).unwrap());
+        assert!(!second.claim("a", &entry).unwrap());
+        assert_eq!(second.outbox("a").unwrap()[0].status, OutboxStatus::Sending);
     }
 
     #[test]
