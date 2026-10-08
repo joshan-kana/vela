@@ -42,6 +42,8 @@ final class MyWorkViewController:
   private var commandPalette: CommandPaletteViewController?
   private var keyMonitor: Any?
   private var actionBusy = false
+  private var cacheOnly = false
+  private var connectionAttemptID = UUID()
   private var prefetchedIssueDetails: [String: IssueDetails] = [:]
   private var prefetchedProjectSchemas: [String: ProjectSchema] = [:]
   private var prefetchGeneration = UUID()
@@ -446,7 +448,8 @@ final class MyWorkViewController:
   private func show(
     _ work: MyWork,
     serviceURL: String,
-    accountID: String?
+    accountID: String?,
+    cached: Bool = false
   ) {
     setConnecting(false)
     tokenField.stringValue = ""
@@ -457,6 +460,8 @@ final class MyWorkViewController:
 
     connectedServiceURL = serviceURL
     connectedAccountID = accountID
+    cacheOnly = cached
+    newIssueButton.isEnabled = !cached
 
     if connectionChanged {
       prefetchedIssueDetails.removeAll()
@@ -476,7 +481,9 @@ final class MyWorkViewController:
     connectionStack.isHidden = true
     scrollView.isHidden = false
     tableView.reloadData()
-    prefetchMyWork()
+    if !cached {
+      prefetchMyWork()
+    }
     view.window?.makeFirstResponder(tableView)
   }
 
@@ -592,58 +599,56 @@ final class MyWorkViewController:
       return
     }
 
+    let attempt = UUID()
+    connectionAttemptID = attempt
     setConnecting(true)
 
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let cached = try? RustBridge.cachedMyWork(
+        serviceURL: account.serviceURL,
+        accountID: account.id
+      )
+
+      if let cached {
+        DispatchQueue.main.async {
+          guard let self, self.connectionAttemptID == attempt else { return }
+          self.serviceURLField.stringValue = account.serviceURL
+          self.show(
+            cached,
+            serviceURL: account.serviceURL,
+            accountID: account.id,
+            cached: true
+          )
+          self.accountDetail.stringValue += " · Cached, refreshing"
+        }
+      }
+
       do {
         let token = try SecureAccountStore.bearerToken(for: account.id)
-        let cached = try? RustBridge.cachedMyWork(
+        let work = try RustBridge.refreshMyWork(
           serviceURL: account.serviceURL,
+          bearerToken: token,
           accountID: account.id
         )
-        if let cached {
-          DispatchQueue.main.async {
-            guard self?.connectedServiceURL.isEmpty == true else { return }
-            self?.serviceURLField.stringValue = account.serviceURL
-            self?.show(
-              cached,
-              serviceURL: account.serviceURL,
-              accountID: account.id
-            )
-            self?.accountDetail.stringValue += " · Cached, refreshing"
-          }
-        }
-
-        do {
-          let work = try RustBridge.refreshMyWork(
+        DispatchQueue.main.async {
+          guard let self, self.connectionAttemptID == attempt else { return }
+          self.serviceURLField.stringValue = account.serviceURL
+          self.show(
+            work,
             serviceURL: account.serviceURL,
-            bearerToken: token,
             accountID: account.id
           )
-          DispatchQueue.main.async {
-            guard self?.connectedAccountID == nil || self?.connectedAccountID == account.id else {
-              return
-            }
-            self?.serviceURLField.stringValue = account.serviceURL
-            self?.show(
-              work,
-              serviceURL: account.serviceURL,
-              accountID: account.id
-            )
-          }
-        } catch {
-          DispatchQueue.main.async {
-            if cached != nil, self?.connectedAccountID == account.id {
-              self?.accountDetail.stringValue += " · Offline (changes unavailable)"
-              self?.setConnecting(false)
-            } else {
-              self?.show(error: error)
-            }
-          }
         }
       } catch {
         DispatchQueue.main.async {
-          self?.show(error: error)
+          guard let self, self.connectionAttemptID == attempt else { return }
+          if cached != nil {
+            self.accountDetail.stringValue =
+              account.serviceURL + " · Offline (read-only)"
+            self.setConnecting(false)
+          } else {
+            self.show(error: error)
+          }
         }
       }
     }
@@ -663,6 +668,9 @@ final class MyWorkViewController:
   }
 
   @objc private func disconnect() {
+    connectionAttemptID = UUID()
+    cacheOnly = false
+    newIssueButton.isEnabled = true
     hideInspector()
     hideQuickCreate()
     hideCommandPalette()
@@ -711,7 +719,8 @@ final class MyWorkViewController:
     preview: MyWorkIssue? = nil,
     prefetchedDetails explicitDetails: IssueDetails? = nil
   ) {
-    guard inspector == nil, quickCreate == nil, commandPalette == nil, !connectedServiceURL.isEmpty
+    guard inspector == nil, quickCreate == nil, commandPalette == nil,
+      !connectedServiceURL.isEmpty, !cacheOnly
     else {
       return
     }
@@ -754,7 +763,8 @@ final class MyWorkViewController:
   }
 
   @objc private func showQuickCreate() {
-    guard quickCreate == nil, inspector == nil, commandPalette == nil, !connectedServiceURL.isEmpty
+    guard quickCreate == nil, inspector == nil, commandPalette == nil,
+      !connectedServiceURL.isEmpty, !cacheOnly
     else {
       return
     }
@@ -890,7 +900,7 @@ final class MyWorkViewController:
   }
 
   private func resolveSelectedIssue() {
-    guard !actionBusy, let issue = selectedIssue, !connectedServiceURL.isEmpty else {
+    guard !actionBusy, let issue = selectedIssue, !connectedServiceURL.isEmpty, !cacheOnly else {
       return
     }
 
@@ -968,8 +978,9 @@ final class MyWorkViewController:
       return
     }
 
-    var commands: [CommandPaletteCommand] = [.createIssue, .searchMyWork]
-    if selectedIssue != nil {
+    var commands: [CommandPaletteCommand] =
+      cacheOnly ? [.searchMyWork] : [.createIssue, .searchMyWork]
+    if selectedIssue != nil && !cacheOnly {
       commands.insert(.openIssue, at: 1)
       commands.insert(.resolveIssue, at: 2)
     }

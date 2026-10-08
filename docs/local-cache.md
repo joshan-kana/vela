@@ -10,7 +10,7 @@ Snapshots use an account namespace derived from the YouTrack service URL and the
 
 Saved accounts initially display their cached My Work list, if available. A fresh fetch then replaces the list; if that fetch fails, Vela labels the view offline and retains the cached list. Unauthenticated first connections still use the regular online fetch, and authenticated initial connections seed the cache after token validation. If local storage is corrupt or inaccessible, online connectivity continues to work without persistence.
 
-**Current offline read scope:** My Work issue summaries only. Issue inspectors, project schemas, saved search definitions and calendars are not yet persisted; opening an inspector and creating an issue are disabled from the cached view on the mobile client. Offline data must never be mistaken for a verified current issue state. The cache uses no background polling or notification mechanism.
+**Current offline read scope:** My Work issue summaries only. Issue inspectors, project schemas, saved search definitions and calendars are not yet persisted; opening an inspector, creating an issue, and mutating issues are disabled from cached views on macOS and mobile. Offline data must never be mistaken for a verified current issue state. The cache uses no background polling or notification mechanism.
 
 ## Outbox and reconciliation
 
