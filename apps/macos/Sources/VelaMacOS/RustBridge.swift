@@ -108,6 +108,23 @@ enum RustBridge {
     return try decode(result, fallbackMessage: "Unable to refresh the OAuth access token.")
   }
 
+  static func loadPlanning(
+    serviceURL: String,
+    bearerToken: String,
+    top: Int = 150
+  ) throws -> PlanningSnapshot {
+    let result: UnsafeMutablePointer<CChar>? = serviceURL.withCString { serviceURLPointer in
+      if bearerToken.isEmpty {
+        vela_planning_snapshot_json(serviceURLPointer, nil, max(1, top))
+      } else {
+        bearerToken.withCString { tokenPointer in
+          vela_planning_snapshot_json(serviceURLPointer, tokenPointer, max(1, top))
+        }
+      }
+    }
+    return try decode(result, fallbackMessage: "Unable to load planning data.")
+  }
+
   static func discover(
     serviceURL: String,
     bearerToken: String

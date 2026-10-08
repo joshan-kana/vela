@@ -4,6 +4,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{LazyLock, Mutex};
 
 use serde::Serialize;
+use vela_core::planning::PlanningSnapshot;
 use vela_core::{
     AgileBoard, CustomFieldValue, Issue, IssueAction, IssueActionResult, IssueDetails, IssueLink,
     OAuthAuthorization, OAuthTokenSet, ProjectSchema, SavedQuery, User, UserRef, YouTrackDiscovery,
@@ -61,6 +62,20 @@ pub extern "C" fn vela_prefetch_my_work_json(
         let bearer_token = read_optional_string(bearer_token)?;
 
         load_my_work_prefetch(&service_url, bearer_token.as_deref(), top)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_planning_snapshot_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+    top: usize,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+        let data = load_my_work_prefetch(&service_url, bearer_token.as_deref(), top)?;
+        Ok(PlanningSnapshot::from_issues(data.issues, &data.schemas))
     })
 }
 

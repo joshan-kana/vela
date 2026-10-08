@@ -24,3 +24,15 @@ Launch the pinned Android API 36 emulator:
 ```sh
 nix run .#android-emulator
 ```
+
+## macOS planning
+
+Open **Planning** from My Work to switch between Timeline, Calendar, and Agenda.
+Vela derives spans and deadlines from each project's YouTrack date fields;
+issues without dates remain in the unscheduled section. Timeline bars can be
+moved or resized by whole calendar days. The native Agenda supports `j`/`k`
+navigation and `u`/`d` half-page jumps.
+
+**Show calendars** optionally displays read-only system calendar events as
+occupied time. Calendars named Tasks or YouTrack are excluded to avoid showing
+mirrored issues twice. Vela does not create or modify calendar events.

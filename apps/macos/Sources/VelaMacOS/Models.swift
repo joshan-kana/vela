@@ -35,6 +35,41 @@ struct MyWork: Decodable {
   let issues: [MyWorkIssue]
 }
 
+struct PlanningField: Decodable {
+  let id: String
+  let fieldType: String
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case fieldType = "field_type"
+  }
+}
+
+struct PlannedIssue: Decodable {
+  let id: String
+  let idReadable: String
+  let summary: String
+  let projectID: String
+  let startAt: Int64?
+  let dueAt: Int64?
+  let startField: PlanningField?
+  let dueField: PlanningField?
+
+  private enum CodingKeys: String, CodingKey {
+    case id, summary
+    case idReadable = "id_readable"
+    case projectID = "project_id"
+    case startAt = "start_at"
+    case dueAt = "due_at"
+    case startField = "start_field"
+    case dueField = "due_field"
+  }
+}
+
+struct PlanningSnapshot: Decodable {
+  let issues: [PlannedIssue]
+}
+
 struct MyWorkPrefetch: Decodable {
   let issues: [IssueDetails]
   let schemas: [ProjectSchema]

@@ -57,6 +57,7 @@ for arch in $requested_archs; do
     -sdk "$sdk"
     -import-objc-header "$ffi_header"
     -framework AppKit
+    -framework EventKit
     -framework CoreFoundation
     -framework Security
     -framework SystemConfiguration

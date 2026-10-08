@@ -29,6 +29,7 @@ final class MyWorkViewController:
   private let searchField = NSSearchField()
   private let actionErrorLabel = NSTextField(wrappingLabelWithString: "")
   private let newIssueButton = NSButton(title: "New issue", target: nil, action: nil)
+  private let planningButton = NSButton(title: "Planning", target: nil, action: nil)
   private let disconnectButton = NSButton(title: "Disconnect", target: nil, action: nil)
   private let tableView = ShortcutTableView()
   private let scrollView = NSScrollView()
@@ -36,6 +37,7 @@ final class MyWorkViewController:
   private var issues: [MyWorkIssue] = []
   private var connectedServiceURL = ""
   private var connectedAccountID: String?
+  private var planning: PlanningViewController?
   private var inspector: IssueInspectorViewController?
   private var quickCreate: QuickCreateViewController?
   private var oauthLoopbackServer: OAuthLoopbackServer?
@@ -137,12 +139,18 @@ final class MyWorkViewController:
     newIssueButton.action = #selector(showQuickCreate)
     newIssueButton.bezelStyle = .inline
 
+    planningButton.target = self
+    planningButton.action = #selector(showPlanning)
+    planningButton.bezelStyle = .inline
+    planningButton.image = NSImage(systemSymbolName: "calendar", accessibilityDescription: nil)
+    planningButton.imagePosition = .imageLeading
+
     disconnectButton.target = self
     disconnectButton.action = #selector(disconnect)
     disconnectButton.bezelStyle = .inline
 
     accountStack.setViews(
-      [accountName, accountDetail, newIssueButton, disconnectButton],
+      [accountName, accountDetail, newIssueButton, planningButton, disconnectButton],
       in: .top
     )
     accountStack.orientation = .vertical
@@ -717,6 +725,43 @@ final class MyWorkViewController:
     self.inspector = inspector
   }
 
+  @objc private func showPlanning() {
+    guard planning == nil, inspector == nil, quickCreate == nil, commandPalette == nil,
+      !connectedServiceURL.isEmpty
+    else { return }
+    let planning = PlanningViewController(
+      serviceURL: connectedServiceURL,
+      accountID: connectedAccountID,
+      onBack: { [weak self] in self?.hidePlanning() },
+      onOpenIssue: { [weak self] issueID in
+        guard let self else { return }
+        self.hidePlanning()
+        self.showInspector(issueID: issueID)
+      },
+      onIssueChanged: { [weak self] issue in self?.updateIssueList(issue) }
+    )
+    setPrimaryContentHidden(true)
+    addChild(planning)
+    planning.view.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(planning.view)
+    NSLayoutConstraint.activate([
+      planning.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      planning.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      planning.view.topAnchor.constraint(equalTo: view.topAnchor),
+      planning.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+    ])
+    self.planning = planning
+  }
+
+  private func hidePlanning() {
+    guard let planning else { return }
+    planning.view.removeFromSuperview()
+    planning.removeFromParent()
+    self.planning = nil
+    setPrimaryContentHidden(false)
+    view.window?.makeFirstResponder(tableView)
+  }
+
   @objc private func showQuickCreate() {
     guard quickCreate == nil, inspector == nil, commandPalette == nil, !connectedServiceURL.isEmpty
     else {
@@ -775,7 +820,7 @@ final class MyWorkViewController:
     let modifiers = event.modifierFlags.intersection(shortcutModifiers)
     let characters = event.charactersIgnoringModifiers?.lowercased() ?? ""
 
-    guard inspector == nil, quickCreate == nil, commandPalette == nil else {
+    guard inspector == nil, quickCreate == nil, commandPalette == nil, planning == nil else {
       return event
     }
 
