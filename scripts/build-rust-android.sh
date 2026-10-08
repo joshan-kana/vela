@@ -13,7 +13,7 @@ if [[ "$configuration" == "Release" ]]; then
 fi
 
 ndk_version="$(
-  sed -n 's/^[[:space:]]*ndkVersion = "\([^"]*\)".*/\1/p' "$repo_root/apps/native/android/build.gradle" |
+  sed -nE "s/^[[:space:]]*ndkVersion[[:space:]]*=[[:space:]]*['\"]([^'\"]+)['\"].*/\1/p" "$repo_root/apps/native/android/build.gradle" |
     head -1
 )"
 
