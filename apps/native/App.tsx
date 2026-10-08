@@ -26,6 +26,9 @@ import {
 } from './src/native/AccountStore';
 import {
   loadMyWork,
+  loadCachedMyWork,
+  persistMyWork,
+  refreshMyWork,
   type IssueDetails,
   type MyWork,
 } from './src/native/VelaRust';
@@ -47,6 +50,9 @@ function App() {
   const [accounts, setAccounts] = useState<StoredAccount[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(true);
   const [work, setWork] = useState<MyWork | null>(null);
+  const [cacheStatus, setCacheStatus] = useState<'live' | 'cached' | 'offline'>(
+    'live',
+  );
   const [session, setSession] = useState<Connection | null>(null);
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
   const [creatingIssue, setCreatingIssue] = useState(false);
@@ -89,7 +95,9 @@ function App() {
           service_url: account.service_url,
           account_id: account.id,
         };
-        const loadedWork = await withConnection(connection, loadMyWork);
+        const loadedWork = await withConnection(connection, (url, token) =>
+          refreshMyWork(url, token, account.id),
+        );
 
         setAccounts(current =>
           [...current.filter(item => item.id !== account.id), account].sort(
@@ -145,6 +153,8 @@ function App() {
       if (enteredToken) {
         account = await savePermanentTokenAccount(trimmedUrl, enteredToken);
         rememberAccount(account);
+        // Local storage is disposable; a cache write failure must not block login.
+        persistMyWork(trimmedUrl, account.id, loadedWork).catch(() => {});
       }
 
       setWork(loadedWork);
@@ -193,11 +203,40 @@ function App() {
       service_url: account.service_url,
       account_id: account.id,
     };
-    const loadedWork = await withConnection(connection, loadMyWork);
+    setConnecting(true);
+    setError(null);
+    let cached: MyWork | null = null;
+    try {
+      // Show the local snapshot immediately. No network or token lookup needed.
+      const snapshot = await loadCachedMyWork(account.service_url, account.id);
+      cached = snapshot?.data ?? null;
+      if (cached) {
+        setServiceUrl(account.service_url);
+        setWork(cached);
+        setSession(connection);
+        setCacheStatus('cached');
+      }
+    } catch {
+      // A corrupt or missing disposable cache must not prevent the live rebuild.
+    }
 
-    setServiceUrl(account.service_url);
-    setWork(loadedWork);
-    setSession(connection);
+    try {
+      const loadedWork = await withConnection(connection, (url, token) =>
+        refreshMyWork(url, token, account.id),
+      );
+      setServiceUrl(account.service_url);
+      setWork(loadedWork);
+      setSession(connection);
+      setCacheStatus('live');
+    } catch (connectionError) {
+      if (cached) {
+        setCacheStatus('offline');
+      } else {
+        setError(message(connectionError, 'Unable to connect to YouTrack'));
+      }
+    } finally {
+      setConnecting(false);
+    }
   }
 
   async function connectStored(account: StoredAccount) {
@@ -240,6 +279,7 @@ function App() {
     setCreatingIssue(false);
     setSession(null);
     setWork(null);
+    setCacheStatus('live');
   }
 
   return (
@@ -336,10 +376,16 @@ function App() {
                     <Text style={{ color: palette.secondaryText }}>
                       {work.user.login}
                       {work.user.guest ? ' · Guest access' : ''}
+                      {cacheStatus === 'cached'
+                        ? ' · Cached, refreshing'
+                        : cacheStatus === 'offline'
+                          ? ' · Offline, cached data'
+                          : ''}
                     </Text>
                     <Pressable
                       accessibilityLabel="New issue"
                       accessibilityRole="button"
+                      disabled={cacheStatus !== 'live'}
                       onPress={() => setCreatingIssue(true)}
                       style={({ pressed }) => [
                         styles.textButton,
@@ -385,6 +431,8 @@ function App() {
                     <Pressable
                       accessibilityLabel={`Open ${item.id_readable}`}
                       accessibilityRole="button"
+                      accessibilityState={{ disabled: cacheStatus !== 'live' }}
+                      disabled={cacheStatus !== 'live'}
                       onPress={() => setSelectedIssueId(item.id)}
                       style={({ pressed }) => [
                         styles.issueRow,

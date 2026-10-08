@@ -362,6 +362,7 @@ final class MyWorkViewController:
           serviceURL: account.serviceURL,
           bearerToken: bearerToken
         )
+        try? RustBridge.storeMyWork(work, serviceURL: account.serviceURL, accountID: account.id)
 
         DispatchQueue.main.async {
           self?.serviceURLField.stringValue = account.serviceURL
@@ -406,6 +407,9 @@ final class MyWorkViewController:
           ).id
         }
 
+        if let accountID {
+          try? RustBridge.storeMyWork(work, serviceURL: serviceURL, accountID: accountID)
+        }
         DispatchQueue.main.async {
           self?.show(
             work,
@@ -593,18 +597,49 @@ final class MyWorkViewController:
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       do {
         let token = try SecureAccountStore.bearerToken(for: account.id)
-        let work = try RustBridge.loadMyWork(
+        let cached = try? RustBridge.cachedMyWork(
           serviceURL: account.serviceURL,
-          bearerToken: token
+          accountID: account.id
         )
+        if let cached {
+          DispatchQueue.main.async {
+            guard self?.connectedServiceURL.isEmpty == true else { return }
+            self?.serviceURLField.stringValue = account.serviceURL
+            self?.show(
+              cached,
+              serviceURL: account.serviceURL,
+              accountID: account.id
+            )
+            self?.accountDetail.stringValue += " · Cached, refreshing"
+          }
+        }
 
-        DispatchQueue.main.async {
-          self?.serviceURLField.stringValue = account.serviceURL
-          self?.show(
-            work,
+        do {
+          let work = try RustBridge.refreshMyWork(
             serviceURL: account.serviceURL,
+            bearerToken: token,
             accountID: account.id
           )
+          DispatchQueue.main.async {
+            guard self?.connectedAccountID == nil || self?.connectedAccountID == account.id else {
+              return
+            }
+            self?.serviceURLField.stringValue = account.serviceURL
+            self?.show(
+              work,
+              serviceURL: account.serviceURL,
+              accountID: account.id
+            )
+          }
+        } catch {
+          DispatchQueue.main.async {
+            if cached != nil, self?.connectedAccountID == account.id {
+              self?.accountDetail.stringValue += " · Offline (changes unavailable)"
+              self?.setConnecting(false)
+            } else {
+              self?.show(error: error)
+            }
+          }
         }
       } catch {
         DispatchQueue.main.async {
@@ -616,6 +651,7 @@ final class MyWorkViewController:
 
   private func forget(account: StoredAccount) {
     do {
+      try RustBridge.clearCachedAccount(serviceURL: account.serviceURL, accountID: account.id)
       try SecureAccountStore.delete(accountID: account.id)
       if UserDefaults.standard.string(forKey: Self.lastConnectedAccountIDKey) == account.id {
         UserDefaults.standard.removeObject(forKey: Self.lastConnectedAccountIDKey)

@@ -173,6 +173,14 @@ class VelaRustModule(
   ) {
     executor.execute {
       try {
+        val account = accountStore.accounts().firstOrNull { it.id == accountId }
+        if (account != null) {
+          val namespace = "${account.serviceUrl}::$accountId"
+          val response = JSONObject(clearCachedAccountJsonNative(cachePath(), namespace))
+          if (response.getString("status") != "ok") {
+            throw IllegalStateException("Unable to clear cached issue data")
+          }
+        }
         accountStore.delete(accountId)
         promise.resolve(null)
       } catch (error: Throwable) {
@@ -452,6 +460,72 @@ class VelaRustModule(
         fieldType,
         eventId,
       )
+    }
+  }
+
+  private external fun storeMyWorkJsonNative(
+    cachePath: String,
+    namespace: String,
+    top: Int,
+    workJson: String,
+  ): String
+
+  @ReactMethod
+  fun storeMyWorkJson(
+    serviceUrl: String,
+    accountId: String,
+    top: Int,
+    workJson: String,
+    promise: Promise,
+  ) {
+    resolveJson(promise) {
+      storeMyWorkJsonNative(cachePath(), "$serviceUrl::$accountId", top, workJson)
+    }
+  }
+
+  private external fun clearCachedAccountJsonNative(
+    cachePath: String,
+    namespace: String,
+  ): String
+
+  private external fun cachedMyWorkJsonNative(
+    cachePath: String,
+    namespace: String,
+    top: Int,
+  ): String
+
+  private external fun refreshMyWorkJsonNative(
+    serviceUrl: String,
+    bearerToken: String,
+    cachePath: String,
+    namespace: String,
+    top: Int,
+  ): String
+
+  private fun cachePath(): String = java.io.File(reactApplicationContext.filesDir, "vela-cache.sqlite3").absolutePath
+
+  @ReactMethod
+  fun cachedMyWorkJson(
+    serviceUrl: String,
+    accountId: String,
+    top: Int,
+    promise: Promise,
+  ) {
+    resolveJson(promise) {
+      cachedMyWorkJsonNative(cachePath(), "$serviceUrl::$accountId", top)
+    }
+  }
+
+  @ReactMethod
+  fun refreshMyWorkJson(
+    serviceUrl: String,
+    bearerToken: String,
+    accountId: String,
+    top: Int,
+    promise: Promise,
+  ) {
+    resolveJson(promise) {
+      refreshMyWorkJsonNative(serviceUrl, bearerToken, cachePath(), "$serviceUrl::$accountId", top)
     }
   }
 

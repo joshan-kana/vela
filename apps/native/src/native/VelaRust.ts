@@ -15,6 +15,8 @@ export type MyWorkIssue = {
   resolved_at: number | null;
 };
 
+export type CachedMyWork = { data: MyWork; saved_at_ms: number };
+
 export type MyWork = {
   user: ConnectedUser;
   issues: MyWorkIssue[];
@@ -343,6 +345,40 @@ type VelaRustModule = {
     fieldId: string,
     fieldType: string,
     eventId: string,
+  ): Promise<string>;
+  storeMyWork?(
+    serviceUrl: string,
+    accountId: string,
+    top: number,
+    workJson: string,
+  ): Promise<unknown>;
+  storeMyWorkJson?(
+    serviceUrl: string,
+    accountId: string,
+    top: number,
+    workJson: string,
+  ): Promise<string>;
+  cachedMyWork?(
+    serviceUrl: string,
+    accountId: string,
+    top: number,
+  ): Promise<CachedMyWork | null>;
+  cachedMyWorkJson?(
+    serviceUrl: string,
+    accountId: string,
+    top: number,
+  ): Promise<string>;
+  refreshMyWork?(
+    serviceUrl: string,
+    bearerToken: string,
+    accountId: string,
+    top: number,
+  ): Promise<MyWork>;
+  refreshMyWorkJson?(
+    serviceUrl: string,
+    bearerToken: string,
+    accountId: string,
+    top: number,
   ): Promise<string>;
   loadMyWork?(
     serviceUrl: string,
@@ -729,4 +765,63 @@ export async function loadMyWork(
   }
 
   throw new Error('Vela Rust bridge has no supported My Work method');
+}
+
+/** Cache reads never require network access or expose a stored credential. */
+export async function loadCachedMyWork(
+  serviceUrl: string,
+  accountId: string,
+  top = 50,
+): Promise<CachedMyWork | null> {
+  const rust = module();
+  if (rust.cachedMyWork) {
+    return rust.cachedMyWork(serviceUrl, accountId, top);
+  }
+  if (rust.cachedMyWorkJson) {
+    return decodeBridgeResponse(
+      await rust.cachedMyWorkJson(serviceUrl, accountId, top),
+    );
+  }
+  throw new Error('Vela Rust bridge has no local cache support');
+}
+
+/** Replace the cached snapshot only after a complete authoritative fetch. */
+export async function refreshMyWork(
+  serviceUrl: string,
+  bearerToken: string,
+  accountId: string,
+  top = 50,
+): Promise<MyWork> {
+  const rust = module();
+  if (rust.refreshMyWork) {
+    return rust.refreshMyWork(serviceUrl, bearerToken, accountId, top);
+  }
+  if (rust.refreshMyWorkJson) {
+    return decodeBridgeResponse(
+      await rust.refreshMyWorkJson(serviceUrl, bearerToken, accountId, top),
+    );
+  }
+  throw new Error('Vela Rust bridge has no durable cache refresh support');
+}
+
+/** Seed the durable cache from a freshly authenticated initial login. */
+export async function persistMyWork(
+  serviceUrl: string,
+  accountId: string,
+  work: MyWork,
+  top = 50,
+): Promise<void> {
+  const rust = module();
+  const data = JSON.stringify(work);
+  if (rust.storeMyWork) {
+    await rust.storeMyWork(serviceUrl, accountId, top, data);
+    return;
+  }
+  if (rust.storeMyWorkJson) {
+    decodeBridgeResponse(
+      await rust.storeMyWorkJson(serviceUrl, accountId, top, data),
+    );
+    return;
+  }
+  throw new Error('Vela Rust bridge has no durable cache writer');
 }

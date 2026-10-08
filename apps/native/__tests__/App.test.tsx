@@ -15,6 +15,9 @@ import {
   loadIssueDetails,
   loadIssueLinks,
   loadMyWork,
+  loadCachedMyWork,
+  refreshMyWork,
+  persistMyWork,
   loadProjectSchema,
 } from '../src/native/VelaRust';
 
@@ -34,6 +37,9 @@ jest.mock('../src/native/VelaRust', () => ({
   loadIssueDetails: jest.fn(),
   loadIssueLinks: jest.fn(),
   loadMyWork: jest.fn(),
+  loadCachedMyWork: jest.fn(),
+  refreshMyWork: jest.fn(),
+  persistMyWork: jest.fn(),
   loadProjectSchema: jest.fn(),
   setCustomFieldValue: jest.fn(),
   setIssueDescription: jest.fn(),
@@ -47,6 +53,9 @@ const mockWithConnection = jest.mocked(withConnection);
 const mockDiscoverYouTrack = jest.mocked(discoverYouTrack);
 const mockExecuteIssueAction = jest.mocked(executeIssueAction);
 const mockLoadMyWork = jest.mocked(loadMyWork);
+const mockLoadCachedMyWork = jest.mocked(loadCachedMyWork);
+const mockRefreshMyWork = jest.mocked(refreshMyWork);
+const mockPersistMyWork = jest.mocked(persistMyWork);
 const mockLoadIssueDetails = jest.mocked(loadIssueDetails);
 const mockLoadIssueLinks = jest.mocked(loadIssueLinks);
 const mockLoadProjectSchema = jest.mocked(loadProjectSchema);
@@ -54,6 +63,11 @@ const mockLoadProjectSchema = jest.mocked(loadProjectSchema);
 beforeEach(() => {
   jest.clearAllMocks();
   mockListAccounts.mockResolvedValue([]);
+  mockLoadCachedMyWork.mockResolvedValue(null);
+  mockPersistMyWork.mockResolvedValue(undefined);
+  mockRefreshMyWork.mockImplementation((url, token) =>
+    mockLoadMyWork(url, token),
+  );
   mockWithConnection.mockImplementation(async (connection, operation) =>
     operation(
       connection.service_url,
@@ -276,11 +290,12 @@ test('reconnects a saved account without putting its token in UI state', async (
       service_url: 'https://saved.youtrack.cloud',
       account_id: 'account-1',
     },
-    mockLoadMyWork,
+    expect.any(Function),
   );
-  expect(mockLoadMyWork).toHaveBeenCalledWith(
+  expect(mockRefreshMyWork).toHaveBeenCalledWith(
     'https://saved.youtrack.cloud',
     'stored-token',
+    'account-1',
   );
 });
 
@@ -503,4 +518,69 @@ test('opens the issue inspector with schema and links', async () => {
   expect(text).toContain('vela');
   expect(text).toContain('Fields');
   expect(text).toContain('Links');
+});
+
+test('renders saved My Work offline without enabling writes', async () => {
+  const account = {
+    id: 'account-offline',
+    service_url: 'https://saved.youtrack.cloud',
+    auth_kind: 'permanent_token' as const,
+  };
+  mockListAccounts.mockResolvedValueOnce([account]);
+  mockLoadCachedMyWork.mockResolvedValueOnce({
+    saved_at_ms: 1780000000000,
+    data: {
+      user: {
+        id: '1-1',
+        login: 'joshan',
+        full_name: 'Joshan',
+        email: null,
+        guest: false,
+      },
+      issues: [
+        {
+          id: '2-9',
+          id_readable: 'vela-9',
+          summary: 'Available without a connection',
+          resolved_at: null,
+        },
+      ],
+    },
+  });
+  mockRefreshMyWork.mockRejectedValueOnce(new Error('Network is offline'));
+
+  let renderer: ReactTestRenderer.ReactTestRenderer;
+  await ReactTestRenderer.act(async () => {
+    renderer = ReactTestRenderer.create(<App />);
+    await Promise.resolve();
+  });
+
+  await ReactTestRenderer.act(async () => {
+    renderer!.root
+      .findByProps({
+        accessibilityLabel: 'Connect https://saved.youtrack.cloud',
+      })
+      .props.onPress();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  const texts = renderer!.root
+    .findAllByType(Text)
+    .map(node => JSON.stringify(node.props.children));
+  expect(
+    texts.some(value => value.includes('Available without a connection')),
+  ).toBe(true);
+  expect(texts.some(value => value.includes('Offline, cached data'))).toBe(
+    true,
+  );
+  expect(
+    renderer!.root.findByProps({ accessibilityLabel: 'New issue' }).props
+      .disabled,
+  ).toBe(true);
+  expect(
+    renderer!.root.findByProps({ accessibilityLabel: 'Open vela-9' }).props
+      .disabled,
+  ).toBe(true);
 });
