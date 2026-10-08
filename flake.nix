@@ -37,7 +37,46 @@
         pkgs = import nixpkgs {
           inherit system;
           overlays = [ (import rust-overlay) ];
+          config = {
+            allowUnfree = true;
+            android_sdk.accept_license = true;
+          };
         };
+
+        androidComposition = pkgs.androidenv.composeAndroidPackages {
+          platformVersions = [ "36" ];
+          buildToolsVersions = [ "36.0.0" ];
+          includeNDK = true;
+          ndkVersions = [ "27.1.12297006" ];
+          includeCmake = true;
+          cmakeVersions = [ "3.22.1" ];
+          includeEmulator = false;
+          includeSystemImages = false;
+        };
+
+        androidSdk = androidComposition.androidsdk;
+        androidSdkRoot = "${androidSdk}/libexec/android-sdk";
+        androidNdkRoot = "${androidSdkRoot}/ndk/27.1.12297006";
+
+        emulatorSupported = pkgs.stdenv.hostPlatform.isDarwin || pkgs.stdenv.hostPlatform.isx86_64;
+        emulatorAbi = if pkgs.stdenv.hostPlatform.isAarch64 then "arm64-v8a" else "x86_64";
+        androidEmulator =
+          if emulatorSupported then
+            pkgs.androidenv.emulateApp {
+              name = "vela-android-emulator";
+              platformVersion = "36";
+              abiVersion = emulatorAbi;
+              systemImageType = "google_apis";
+              deviceName = "vela-api36-${emulatorAbi}";
+              androidUserHome = "$HOME/.cache/vela/android-emulator";
+              configOptions = {
+                "hw.keyboard" = "yes";
+                "hw.gpu.enabled" = "yes";
+                "hw.gpu.mode" = "auto";
+              };
+            }
+          else
+            null;
 
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [
@@ -45,24 +84,132 @@
             "rust-src"
             "rustfmt"
           ];
+          targets = [
+            "aarch64-linux-android"
+            "armv7-linux-androideabi"
+            "i686-linux-android"
+            "x86_64-linux-android"
+          ]
+          ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
+            "aarch64-apple-darwin"
+            "aarch64-apple-ios"
+            "x86_64-apple-darwin"
+          ]
+          ++ pkgs.lib.optionals (pkgs.stdenv.hostPlatform.isDarwin && pkgs.stdenv.hostPlatform.isAarch64) [
+            "aarch64-apple-ios-sim"
+          ]
+          ++ pkgs.lib.optionals (pkgs.stdenv.hostPlatform.isDarwin && pkgs.stdenv.hostPlatform.isx86_64) [
+            "x86_64-apple-ios"
+          ];
+        };
+
+        rustPlatform = pkgs.makeRustPlatform {
+          cargo = rustToolchain;
+          rustc = rustToolchain;
+        };
+
+        nativeAppCheck = pkgs.buildNpmPackage {
+          pname = "vela-native-check";
+          version = "0";
+
+          src = ./apps/native;
+          npmDepsHash = "sha256-+AQNKeRv5c++DtG4KyJ+jkfWmsmOXioolV+P4tSpkY8=";
+
+          dontNpmBuild = true;
+
+          buildPhase = ''
+            runHook preBuild
+            npm run lint
+            npm run typecheck
+            npm test -- --runInBand
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            touch "$out"
+          '';
+        };
+
+        rustWorkspaceCheck = rustPlatform.buildRustPackage {
+          pname = "vela-workspace-check";
+          version = "0";
+
+          src = self;
+
+          cargoLock.lockFile = ./Cargo.lock;
+
+          nativeBuildInputs = with pkgs; [
+            cmake
+            pkg-config
+          ];
+
+          buildPhase = ''
+            runHook preBuild
+            cargo clippy --workspace --all-targets --all-features -- -D warnings
+            runHook postBuild
+          '';
+
+          checkPhase = ''
+            runHook preCheck
+            cargo test --workspace --all-features
+            runHook postCheck
+          '';
+
+          installPhase = ''
+            touch "$out"
+          '';
         };
 
         treefmt = treefmt-nix.lib.evalModule pkgs {
           projectRootFile = "flake.nix";
 
           programs = {
+            clang-format.enable = true;
             deadnix.enable = true;
+            ktlint.enable = true;
             nixfmt.enable = true;
             prettier.enable = true;
             rumdl-check.enable = true;
             rumdl-format.enable = true;
             rustfmt.enable = true;
+            shellcheck.enable = true;
+            shfmt = {
+              enable = true;
+              useEditorConfig = true;
+            };
             statix.enable = true;
             taplo.enable = true;
             typos.enable = true;
+            xmllint.enable = true;
           };
 
           settings.formatter = {
+            clang-format.includes = [
+              "*.c"
+              "*.cc"
+              "*.cpp"
+              "*.h"
+              "*.hh"
+              "*.hpp"
+              "*.m"
+              "*.mm"
+            ];
+
+            ktlint.includes = [ "apps/native/android/**/*.kt" ];
+
+            groovy-lint = {
+              command = pkgs.lib.getExe pkgs.npm-groovy-lint;
+              includes = [ "*.gradle" ];
+              options = [
+                "--noserver"
+                "--format"
+                "--failon"
+                "error"
+              ];
+            };
+
+            xmllint.includes = [ "apps/native/android/**/*.xml" ];
+
             statix.priority = 1;
             deadnix.priority = 2;
             nixfmt.priority = 3;
@@ -84,9 +231,34 @@
             };
 
             typos = {
+              excludes = [
+                "apps/native/**/*.pbxproj"
+                "apps/native/**/*.storyboard"
+              ];
               includes = [ "*.md" ];
               priority = 3;
             };
+
+            swift-format = {
+              command = pkgs.lib.getExe pkgs.swift-format;
+              includes = [ "apps/**/*.swift" ];
+              options = [
+                "format"
+                "--in-place"
+              ];
+              priority = 1;
+            };
+
+            swift-lint = {
+              command = pkgs.lib.getExe pkgs.swift-format;
+              includes = [ "apps/**/*.swift" ];
+              options = [ "lint" ];
+              priority = 2;
+            };
+
+            shfmt.priority = 1;
+            shellcheck.priority = 2;
+            ktlint.priority = 1;
           };
         };
 
@@ -98,7 +270,7 @@
               enable = true;
               name = "Repository formatting and linting";
               entry = "nix build --no-link .#checks.${system}.repo-quality";
-              files = "\\.(json|lock|md|nix|rs|toml|tsx?|ya?ml)$|^\\.envrc$";
+              files = "\\.(c|cc|cpp|gradle|h|hh|hpp|js|json|kt|kts|lock|m|md|mm|nix|plist|rs|sh|swift|toml|tsx?|xml|ya?ml)$|^\\.(clang-format|editorconfig|envrc)$";
               pass_filenames = false;
             };
 
@@ -117,32 +289,130 @@
         '';
 
         checkRepo = pkgs.writeShellScriptBin "chk" ''
-          exec nix flake check "$@"
+          repo_root="$(${pkgs.lib.getExe pkgs.git} rev-parse --show-toplevel)"
+          cd "$repo_root"
+
+          nix flake check "$@"
+
+          if [ "$(uname -s)" = "Darwin" ]; then
+            exec ./scripts/check-macos-app.sh
+          fi
         '';
+
+        updateDependencies = pkgs.writeShellApplication {
+          name = "vela-update";
+          runtimeInputs = [
+            pkgs.git
+            pkgs.nix
+            pkgs.nodejs_24
+            pkgs.prefetch-npm-deps
+            pkgs.python3
+            rustToolchain
+          ];
+          text = ''
+            repo_root="$(git rev-parse --show-toplevel)"
+            cd "$repo_root"
+
+            echo "Updating flake inputs..."
+            nix flake update
+
+            echo "Updating Cargo dependencies..."
+            cargo update
+
+            echo "Updating npm dependencies..."
+            (
+              cd apps/native
+              npm update --package-lock-only --ignore-scripts
+            )
+
+            echo "Refreshing npmDepsHash..."
+            npm_hash="$(prefetch-npm-deps apps/native/package-lock.json)"
+            python3 - "$npm_hash" <<'PY'
+            import re
+            import sys
+            from pathlib import Path
+
+            npm_hash = sys.argv[1]
+            path = Path("flake.nix")
+            text = path.read_text()
+            text, count = re.subn(
+                r'(?m)^(\s*npmDepsHash = ")[^"]+(";)$',
+                rf'\g<1>{npm_hash}\2',
+                text,
+                count=1,
+            )
+            if count != 1:
+                raise SystemExit("could not find exactly one npmDepsHash in flake.nix")
+            path.write_text(text)
+            PY
+
+            echo "Formatting..."
+            nix fmt
+
+            echo "Checking..."
+            nix flake check
+          '';
+        };
+
+        mkDevShell = if pkgs.stdenv.hostPlatform.isDarwin then pkgs.mkShellNoCC else pkgs.mkShell;
       in
       {
         formatter = treefmt.config.build.wrapper;
 
-        devShells.default = pkgs.mkShell {
-          packages = with pkgs; [
-            checkRepo
-            formatRepo
-            git
-            jq
-            nixd
-            nodejs_24
-            pnpm
-            rust-analyzer
-            rustToolchain
-            treefmt.config.build.wrapper
-          ];
+        apps.update = {
+          type = "app";
+          program = "${updateDependencies}/bin/vela-update";
+          meta.description = "Update Vela's unpinned dependencies and validate the result";
+        };
+
+        packages = pkgs.lib.optionalAttrs emulatorSupported {
+          android-emulator = androidEmulator;
+        };
+
+        devShells.default = mkDevShell {
+          packages =
+            (with pkgs; [
+              androidSdk
+              cargo-ndk
+              checkRepo
+              cmake
+              formatRepo
+              git
+              jdk17
+              jq
+              nixd
+              nodejs_24
+              pkg-config
+              rust-analyzer
+              rustToolchain
+              swift-format
+              treefmt.config.build.wrapper
+            ])
+            ++ (
+              with pkgs;
+              lib.optionals stdenv.hostPlatform.isDarwin [
+                cocoapods
+                watchman
+              ]
+            );
 
           inherit (preCommit) shellHook;
+
+          ANDROID_HOME = androidSdkRoot;
+          ANDROID_SDK_ROOT = androidSdkRoot;
+          ANDROID_NDK_HOME = androidNdkRoot;
+          ANDROID_NDK_ROOT = androidNdkRoot;
+          JAVA_HOME = pkgs.jdk17.home;
+          GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidSdkRoot}/build-tools/36.0.0/aapt2";
 
           RUST_BACKTRACE = "1";
         };
 
-        checks.repo-quality = treefmt.config.build.check self;
+        checks = {
+          native-app = nativeAppCheck;
+          repo-quality = treefmt.config.build.check self;
+          rust-workspace = rustWorkspaceCheck;
+        };
       }
     );
 }
