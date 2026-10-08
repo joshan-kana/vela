@@ -299,10 +299,71 @@
           fi
         '';
 
+        updateDependencies = pkgs.writeShellApplication {
+          name = "vela-update";
+          runtimeInputs = [
+            pkgs.git
+            pkgs.nix
+            pkgs.nodejs_24
+            pkgs.prefetch-npm-deps
+            pkgs.python3
+            rustToolchain
+          ];
+          text = ''
+            repo_root="$(git rev-parse --show-toplevel)"
+            cd "$repo_root"
+
+            echo "Updating flake inputs..."
+            nix flake update
+
+            echo "Updating Cargo dependencies..."
+            cargo update
+
+            echo "Updating npm dependencies..."
+            (
+              cd apps/native
+              npm update --package-lock-only --ignore-scripts
+            )
+
+            echo "Refreshing npmDepsHash..."
+            npm_hash="$(prefetch-npm-deps apps/native/package-lock.json)"
+            python3 - "$npm_hash" <<'PY'
+            import re
+            import sys
+            from pathlib import Path
+
+            npm_hash = sys.argv[1]
+            path = Path("flake.nix")
+            text = path.read_text()
+            text, count = re.subn(
+                r'(?m)^(\s*npmDepsHash = ")[^"]+(";)$',
+                rf'\g<1>{npm_hash}\2',
+                text,
+                count=1,
+            )
+            if count != 1:
+                raise SystemExit("could not find exactly one npmDepsHash in flake.nix")
+            path.write_text(text)
+            PY
+
+            echo "Formatting..."
+            nix fmt
+
+            echo "Checking..."
+            nix flake check
+          '';
+        };
+
         mkDevShell = if pkgs.stdenv.hostPlatform.isDarwin then pkgs.mkShellNoCC else pkgs.mkShell;
       in
       {
         formatter = treefmt.config.build.wrapper;
+
+        apps.update = {
+          type = "app";
+          program = "${updateDependencies}/bin/vela-update";
+          meta.description = "Update Vela's unpinned dependencies and validate the result";
+        };
 
         packages = pkgs.lib.optionalAttrs emulatorSupported {
           android-emulator = androidEmulator;
