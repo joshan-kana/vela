@@ -37,7 +37,6 @@ struct MyWork: Codable {
 
 struct CachedMyWork: Decodable {
   let data: MyWork
-  let saved_at_ms: Int64
 }
 
 struct MyWorkPrefetch: Decodable {
