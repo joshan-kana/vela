@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+macos_deployment_target="$(plutil -extract LSMinimumSystemVersion raw -o - "$repo_root/apps/macos/Info.plist")"
 configuration="${1:-Debug}"
 
 case "$configuration" in
@@ -26,7 +27,7 @@ temp_dir="$repo_root/apps/macos/build/.swift-$configuration"
 rm -rf "$app_dir" "$temp_dir"
 mkdir -p "$binary_dir" "$contents/Resources" "$temp_dir"
 
-ARCHS="$requested_archs" "$repo_root/scripts/build-rust-macos.sh" "$configuration"
+MACOSX_DEPLOYMENT_TARGET="$macos_deployment_target" ARCHS="$requested_archs" "$repo_root/scripts/build-rust-macos.sh" "$configuration"
 
 sdk="$(xcrun --sdk macosx --show-sdk-path)"
 rust_archive="$repo_root/target/vela-macos/$profile/libvela_ffi.a"
@@ -37,10 +38,10 @@ binaries=()
 for arch in $requested_archs; do
   case "$arch" in
     arm64)
-      swift_target="arm64-apple-macos14.0"
+      swift_target="arm64-apple-macos${macos_deployment_target}"
       ;;
     x86_64)
-      swift_target="x86_64-apple-macos14.0"
+      swift_target="x86_64-apple-macos${macos_deployment_target}"
       ;;
     *)
       echo "error: unsupported macOS architecture: $arch" >&2

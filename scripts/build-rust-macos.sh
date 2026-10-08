@@ -2,7 +2,9 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+macos_deployment_target="$(plutil -extract LSMinimumSystemVersion raw -o - "$repo_root/apps/macos/Info.plist")"
 configuration="${1:-Debug}"
+export MACOSX_DEPLOYMENT_TARGET="$macos_deployment_target"
 requested_archs="${ARCHS:-$(uname -m)}"
 
 case "$configuration" in
