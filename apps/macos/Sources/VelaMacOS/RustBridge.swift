@@ -485,6 +485,76 @@ enum RustBridge {
     return try decode(result, fallbackMessage: "Unable to prefetch My Work.")
   }
 
+  private static var cachePath: String {
+    FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+      .appendingPathComponent("Vela/cache.sqlite3").path
+  }
+
+  static func storeMyWork(
+    _ work: MyWork,
+    serviceURL: String,
+    accountID: String,
+    top: Int = 50
+  ) throws {
+    let namespace = serviceURL + "::" + accountID
+    let json = try JSONEncoder().encode(work)
+    guard let payload = String(data: json, encoding: .utf8) else {
+      throw RustBridgeError.invalidResponse
+    }
+    let result = cachePath.withCString { pathPointer in
+      namespace.withCString { scopePointer in
+        payload.withCString { jsonPointer in
+          vela_store_my_work_json(pathPointer, scopePointer, top, jsonPointer)
+        }
+      }
+    }
+    let _: [String: Bool] = try decode(result, fallbackMessage: "Unable to save local cache.")
+  }
+
+  static func clearCachedAccount(serviceURL: String, accountID: String) throws {
+    let namespace = serviceURL + "::" + accountID
+    let result = cachePath.withCString { pathPointer in
+      namespace.withCString { scopePointer in
+        vela_clear_cache_account_json(pathPointer, scopePointer)
+      }
+    }
+    let _: [String: Bool] = try decode(result, fallbackMessage: "Unable to clear local cache.")
+  }
+
+  static func cachedMyWork(
+    serviceURL: String,
+    accountID: String,
+    top: Int = 50
+  ) throws -> MyWork {
+    let namespace = serviceURL + "::" + accountID
+    let result = cachePath.withCString { pathPointer in
+      namespace.withCString { namespacePointer in
+        vela_cached_my_work_json(pathPointer, namespacePointer, top)
+      }
+    }
+    let cached: CachedMyWork = try decode(result, fallbackMessage: "No offline copy available.")
+    return cached.data
+  }
+
+  static func refreshMyWork(
+    serviceURL: String,
+    bearerToken: String,
+    accountID: String,
+    top: Int = 50
+  ) throws -> MyWork {
+    let namespace = serviceURL + "::" + accountID
+    let result = serviceURL.withCString { urlPointer in
+      bearerToken.withCString { tokenPointer in
+        cachePath.withCString { pathPointer in
+          namespace.withCString { namespacePointer in
+            vela_refresh_my_work_json(urlPointer, tokenPointer, pathPointer, namespacePointer, top)
+          }
+        }
+      }
+    }
+    return try decode(result, fallbackMessage: "Unable to refresh cached My Work.")
+  }
+
   static func loadMyWork(
     serviceURL: String,
     bearerToken: String,

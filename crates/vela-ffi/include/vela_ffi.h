@@ -11,6 +11,32 @@ char *vela_load_my_work_json(
   const char *service_url,
   const char *bearer_token,
   size_t top);
+char *vela_cached_my_work_json(
+  const char *cache_path,
+  const char *namespace_key,
+  size_t top);
+char *vela_refresh_my_work_json(
+  const char *service_url,
+  const char *bearer_token,
+  const char *cache_path,
+  const char *namespace_key,
+  size_t top);
+char *vela_store_my_work_json(
+  const char *cache_path,
+  const char *namespace_key,
+  size_t top,
+  const char *work_json);
+char *vela_outbox_json(
+  const char *cache_path,
+  const char *namespace_key);
+char *vela_clear_cache_account_json(
+  const char *cache_path,
+  const char *namespace_key);
+char *vela_reconcile_outbox_json(
+  const char *service_url,
+  const char *bearer_token,
+  const char *cache_path,
+  const char *namespace_key);
 char *vela_prefetch_my_work_json(
   const char *service_url,
   const char *bearer_token,

@@ -3,7 +3,8 @@ use std::ffi::{CStr, CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{LazyLock, Mutex};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use vela_cache::{Cache, OutboxEntry, Snapshot};
 use vela_core::{
     AgileBoard, CustomFieldValue, Issue, IssueAction, IssueActionResult, IssueDetails, IssueLink,
     OAuthAuthorization, OAuthTokenSet, ProjectSchema, SavedQuery, User, UserRef, YouTrackDiscovery,
@@ -17,7 +18,7 @@ enum BridgeResponse<T> {
     Error { message: String },
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct MyWork {
     user: User,
     issues: Vec<Issue>,
@@ -47,6 +48,103 @@ pub extern "C" fn vela_load_my_work_json(
         let bearer_token = read_optional_string(bearer_token)?;
 
         load_my_work(&service_url, bearer_token.as_deref(), top)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_cached_my_work_json(
+    cache_path: *const c_char,
+    namespace: *const c_char,
+    top: usize,
+) -> *mut c_char {
+    ffi_json(|| {
+        let path = read_required_string(cache_path, "cache path")?;
+        let namespace = read_required_string(namespace, "account namespace")?;
+        cached_my_work(&path, &namespace, top)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_refresh_my_work_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+    cache_path: *const c_char,
+    namespace: *const c_char,
+    top: usize,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+        let path = read_required_string(cache_path, "cache path")?;
+        let namespace = read_required_string(namespace, "account namespace")?;
+        refresh_my_work(
+            &service_url,
+            bearer_token.as_deref(),
+            &path,
+            &namespace,
+            top,
+        )
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_store_my_work_json(
+    cache_path: *const c_char,
+    namespace: *const c_char,
+    top: usize,
+    work_json: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let path = read_required_string(cache_path, "cache path")?;
+        let namespace = read_required_string(namespace, "account namespace")?;
+        let json = read_required_string(work_json, "My Work JSON")?;
+        let work: MyWork = serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        store_my_work(&path, &namespace, top, &work)?;
+        Ok(serde_json::json!({"saved": true}))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_outbox_json(
+    cache_path: *const c_char,
+    namespace: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let path = read_required_string(cache_path, "cache path")?;
+        let namespace = read_required_string(namespace, "account namespace")?;
+        let db = Cache::open(path).map_err(|error| error.to_string())?;
+        db.outbox(&namespace).map_err(|error| error.to_string())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_clear_cache_account_json(
+    cache_path: *const c_char,
+    namespace: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let path = read_required_string(cache_path, "cache path")?;
+        let namespace = read_required_string(namespace, "account namespace")?;
+        let mut db = Cache::open(path).map_err(|error| error.to_string())?;
+        db.clear_account(&namespace)
+            .map_err(|error| error.to_string())?;
+        Ok(serde_json::json!({"cleared": true}))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vela_reconcile_outbox_json(
+    service_url: *const c_char,
+    bearer_token: *const c_char,
+    cache_path: *const c_char,
+    namespace: *const c_char,
+) -> *mut c_char {
+    ffi_json(|| {
+        let service_url = read_required_string(service_url, "service URL")?;
+        let bearer_token = read_optional_string(bearer_token)?;
+        let path = read_required_string(cache_path, "cache path")?;
+        let namespace = read_required_string(namespace, "account namespace")?;
+        reconcile_outbox(&service_url, bearer_token.as_deref(), &path, &namespace)
     })
 }
 
@@ -687,6 +785,50 @@ fn load_my_work_prefetch(
     })
 }
 
+fn store_my_work(path: &str, namespace: &str, top: usize, work: &MyWork) -> Result<(), String> {
+    let mut db = Cache::open(path).map_err(|error| error.to_string())?;
+    db.store(namespace, &format!("my_work:{top}"), work)
+        .map_err(|error| error.to_string())
+}
+
+fn cached_my_work(
+    path: &str,
+    namespace: &str,
+    top: usize,
+) -> Result<Option<Snapshot<MyWork>>, String> {
+    let db = Cache::open(path).map_err(|error| error.to_string())?;
+    db.snapshot(namespace, &format!("my_work:{top}"))
+        .map_err(|error| error.to_string())
+}
+
+fn refresh_my_work(
+    service_url: &str,
+    bearer_token: Option<&str>,
+    path: &str,
+    namespace: &str,
+    top: usize,
+) -> Result<MyWork, String> {
+    // Only write an authoritative snapshot after a successful full fetch.
+    let work = load_my_work(service_url, bearer_token, top)?;
+    if let Err(error) = store_my_work(path, namespace, top, &work) {
+        eprintln!("Vela: optional cache write failed: {error}");
+    }
+    Ok(work)
+}
+
+fn reconcile_outbox(
+    service_url: &str,
+    bearer_token: Option<&str>,
+    path: &str,
+    namespace: &str,
+) -> Result<Vec<OutboxEntry>, String> {
+    let mut db = Cache::open(path).map_err(|error| error.to_string())?;
+    let client = client(service_url, bearer_token)?;
+    runtime()?
+        .block_on(db.reconcile(namespace, &client))
+        .map_err(|error| error.to_string())
+}
+
 fn load_my_work(
     service_url: &str,
     bearer_token: Option<&str>,
@@ -1005,13 +1147,13 @@ mod android {
     };
 
     use super::{
-        apply_custom_field_event, begin_oauth, bridge_response_json, discover, exchange_oauth,
-        execute_issue_action, load_agile_boards, load_issue_details, load_issue_links,
-        load_my_work, load_project_schema, load_saved_queries, load_users, refresh_oauth,
-        set_custom_field_value, set_issue_description, set_issue_summary,
+        apply_custom_field_event, begin_oauth, bridge_response_json, cached_my_work, discover,
+        exchange_oauth, execute_issue_action, load_agile_boards, load_issue_details,
+        load_issue_links, load_my_work, load_project_schema, load_saved_queries, load_users,
+        refresh_my_work, refresh_oauth, set_custom_field_value, set_issue_description,
+        set_issue_summary,
     };
     use std::panic::{AssertUnwindSafe, catch_unwind};
-    use std::sync::LazyLock;
 
     #[unsafe(no_mangle)]
     pub extern "system" fn Java_com_vela_VelaRustModule_initializeRust<'local>(
@@ -1450,6 +1592,106 @@ mod android {
                 let json = bridge_response_json(response);
 
                 Ok(env.new_string(json)?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_storeMyWorkJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        cache_path: JString<'local>,
+        namespace: JString<'local>,
+        top: jint,
+        work_json: JString<'local>,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let cache_path = cache_path.try_to_string(env)?;
+                let namespace = namespace.try_to_string(env)?;
+                let work_json = work_json.try_to_string(env)?;
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    let work: super::MyWork =
+                        serde_json::from_str(&work_json).map_err(|error| error.to_string())?;
+                    super::store_my_work(&cache_path, &namespace, top.max(1) as usize, &work)?;
+                    Ok::<_, String>(serde_json::json!({"saved": true}))
+                }));
+                Ok(env.new_string(bridge_response_json(response))?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_clearCachedAccountJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        cache_path: JString<'local>,
+        namespace: JString<'local>,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let cache_path = cache_path.try_to_string(env)?;
+                let namespace = namespace.try_to_string(env)?;
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    let mut db =
+                        vela_cache::Cache::open(&cache_path).map_err(|error| error.to_string())?;
+                    db.clear_account(&namespace)
+                        .map_err(|error| error.to_string())?;
+                    Ok::<_, String>(serde_json::json!({"cleared": true}))
+                }));
+                Ok(env.new_string(bridge_response_json(response))?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_cachedMyWorkJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        cache_path: JString<'local>,
+        namespace: JString<'local>,
+        top: jint,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let cache_path = cache_path.try_to_string(env)?;
+                let namespace = namespace.try_to_string(env)?;
+                let top = top.max(1) as usize;
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    cached_my_work(&cache_path, &namespace, top)
+                }));
+                Ok(env.new_string(bridge_response_json(response))?.into_raw())
+            })
+            .resolve::<ThrowRuntimeExAndDefault>()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_com_vela_VelaRustModule_refreshMyWorkJsonNative<'local>(
+        mut unowned_env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        service_url: JString<'local>,
+        bearer_token: JString<'local>,
+        cache_path: JString<'local>,
+        namespace: JString<'local>,
+        top: jint,
+    ) -> jstring {
+        unowned_env
+            .with_env(|env| -> jni::errors::Result<jstring> {
+                let service_url = service_url.try_to_string(env)?;
+                let bearer_token = bearer_token.try_to_string(env)?;
+                let cache_path = cache_path.try_to_string(env)?;
+                let namespace = namespace.try_to_string(env)?;
+                let top = top.max(1) as usize;
+                let response = catch_unwind(AssertUnwindSafe(|| {
+                    refresh_my_work(
+                        &service_url,
+                        (!bearer_token.is_empty()).then_some(bearer_token.as_str()),
+                        &cache_path,
+                        &namespace,
+                        top,
+                    )
+                }));
+                Ok(env.new_string(bridge_response_json(response))?.into_raw())
             })
             .resolve::<ThrowRuntimeExAndDefault>()
     }

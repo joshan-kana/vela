@@ -7,6 +7,8 @@
 @interface VelaRustModule : NSObject <RCTBridgeModule>
 @end
 
+static NSString *VelaCachePath(void);
+
 static NSString *const VelaAccountService = @"io.github.joshankana.vela.youtrack";
 static NSString *const VelaPendingOAuthService = @"io.github.joshankana.vela.oauth.pending";
 static NSString *const VelaPermanentTokenAuthKind = @"permanent_token";
@@ -549,6 +551,27 @@ RCT_REMAP_METHOD(deleteAccount,
 {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     NSError *error = nil;
+    NSDictionary *account = nil;
+    for (NSDictionary *entry in VelaAccountEntries(&error)) {
+      if ([entry[@"id"] isEqualToString:accountId]) {
+        account = entry;
+        break;
+      }
+    }
+    if (error != nil) {
+      reject(@"vela_accounts", error.localizedDescription, error);
+      return;
+    }
+    if (account != nil) {
+      NSString *scope = [NSString stringWithFormat:@"%@::%@", account[@"service_url"], accountId];
+      char *response = vela_clear_cache_account_json(VelaCachePath().UTF8String, scope.UTF8String);
+      NSError *cacheError = nil;
+      NSDictionary *cleared = VelaDecodeRustResponse(response, &cacheError);
+      if (cleared == nil) {
+        reject(@"vela_accounts", cacheError.localizedDescription, cacheError);
+        return;
+      }
+    }
     if (!VelaDeleteAccount(accountId, &error)) {
       reject(@"vela_accounts", error.localizedDescription, error);
       return;
@@ -972,6 +995,63 @@ RCT_REMAP_METHOD(applyCustomFieldEvent,
       fieldId.UTF8String,
       fieldType.UTF8String,
       eventId.UTF8String);
+    ResolveRustResponse(result, resolve, reject);
+  });
+}
+
+static NSString *VelaCachePath(void)
+{
+  NSString *support = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES).firstObject;
+  return [[support stringByAppendingPathComponent:@"Vela"] stringByAppendingPathComponent:@"cache.sqlite3"];
+}
+
+RCT_REMAP_METHOD(storeMyWork,
+                 storeMyWorkWithServiceUrl : (NSString *)serviceUrl
+                   accountId : (NSString *)accountId
+                     top : (nonnull NSNumber *)top
+                       workJson : (NSString *)workJson
+                         resolver : (RCTPromiseResolveBlock)resolve
+                           rejecter : (RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSString *scope = [NSString stringWithFormat:@"%@::%@", serviceUrl, accountId];
+    char *result = vela_store_my_work_json(VelaCachePath().UTF8String,
+                                           scope.UTF8String,
+                                           MAX((NSUInteger)1, top.unsignedIntegerValue),
+                                           workJson.UTF8String);
+    ResolveRustResponse(result, resolve, reject);
+  });
+}
+
+RCT_REMAP_METHOD(cachedMyWork,
+                 cachedMyWorkWithServiceUrl : (NSString *)serviceUrl
+                   accountId : (NSString *)accountId
+                     top : (nonnull NSNumber *)top
+                       resolver : (RCTPromiseResolveBlock)resolve
+                         rejecter : (RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSString *scope = [NSString stringWithFormat:@"%@::%@", serviceUrl, accountId];
+    char *result = vela_cached_my_work_json(VelaCachePath().UTF8String, scope.UTF8String, MAX((NSUInteger)1, top.unsignedIntegerValue));
+    ResolveRustResponse(result, resolve, reject);
+  });
+}
+
+RCT_REMAP_METHOD(refreshMyWork,
+                 refreshMyWorkWithServiceUrl : (NSString *)serviceUrl
+                   bearerToken : (NSString *)bearerToken
+                     accountId : (NSString *)accountId
+                       top : (nonnull NSNumber *)top
+                         resolver : (RCTPromiseResolveBlock)resolve
+                           rejecter : (RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSString *scope = [NSString stringWithFormat:@"%@::%@", serviceUrl, accountId];
+    char *result = vela_refresh_my_work_json(serviceUrl.UTF8String,
+                                             bearerToken.length ? bearerToken.UTF8String : NULL,
+                                             VelaCachePath().UTF8String,
+                                             scope.UTF8String,
+                                             MAX((NSUInteger)1, top.unsignedIntegerValue));
     ResolveRustResponse(result, resolve, reject);
   });
 }

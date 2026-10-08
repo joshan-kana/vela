@@ -1,6 +1,6 @@
 import Foundation
 
-struct ConnectedUser: Decodable {
+struct ConnectedUser: Codable {
   let id: String
   let login: String
   let fullName: String
@@ -16,7 +16,7 @@ struct ConnectedUser: Decodable {
   }
 }
 
-struct MyWorkIssue: Decodable {
+struct MyWorkIssue: Codable {
   let id: String
   let idReadable: String
   let summary: String
@@ -30,9 +30,13 @@ struct MyWorkIssue: Decodable {
   }
 }
 
-struct MyWork: Decodable {
+struct MyWork: Codable {
   let user: ConnectedUser
   let issues: [MyWorkIssue]
+}
+
+struct CachedMyWork: Decodable {
+  let data: MyWork
 }
 
 struct MyWorkPrefetch: Decodable {
